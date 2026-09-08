@@ -52,6 +52,40 @@ def _load_dotenv() -> None:
 
 
 _load_dotenv()
+DOTENV_PATH: str = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+
+
+def update_dotenv_value(key: str, value: str, path: str = "") -> bool:
+    """Rewrite one KEY=VALUE line of the local .env (atomically, keeping every
+    other line and comment) and mirror it into this process's environment.
+    Used when the bot refreshes its own access token or the tunnel address
+    changes, so the next start picks the new value up. Returns False when the
+    file does not exist (the value was set in the real environment instead)."""
+    path = path or DOTENV_PATH
+    if not os.path.exists(path):
+        return False
+    with open(path, encoding="utf-8", newline="") as fh:
+        text = fh.read()
+    nl = "\r\n" if "\r\n" in text else "\n"
+    lines = text.split(nl)
+    done = False
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped.startswith("#") or "=" not in stripped:
+            continue
+        if stripped.split("=", 1)[0].strip() == key:
+            lines[i] = f"{key}={value}"
+            done = True
+    if not done:
+        if lines and lines[-1] != "":
+            lines.append("")
+        lines.insert(len(lines) - 1, f"{key}={value}")
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8", newline="") as fh:
+        fh.write(nl.join(lines))
+    os.replace(tmp, path)
+    os.environ[key] = value
+    return True
 
 # ---------------------------------------------------------------------------
 # META / INSTAGRAM
@@ -131,6 +165,10 @@ META_APP_SECRET: str = os.getenv("META_APP_SECRET", "") or APP_SECRET
 # Where Meta can reach THIS server (https://... in production, or a tunnel).
 # The OAuth redirect URI is PUBLIC_BASE_URL + /connect/instagram/callback.
 PUBLIC_BASE_URL: str = os.getenv("PUBLIC_BASE_URL", "http://localhost:8000").rstrip("/")
+# Hosted on Railway: the platform publishes the service's domain itself, so a
+# generated domain is picked up with no manual configuration.
+if not os.getenv("PUBLIC_BASE_URL") and os.getenv("RAILWAY_PUBLIC_DOMAIN"):
+    PUBLIC_BASE_URL = "https://" + os.getenv("RAILWAY_PUBLIC_DOMAIN", "").strip().rstrip("/")
 
 
 def detect_quick_tunnel() -> str:

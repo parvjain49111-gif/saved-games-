@@ -10,3 +10,6 @@ __pycache__/
 desktop.ini
 *connection*.json
 *.json.tmp
+
+# generated variables file for the Railway dashboard (holds secrets)
+.env.railway

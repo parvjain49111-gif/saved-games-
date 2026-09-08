@@ -10,7 +10,8 @@ guard and the DM/comment separation end to end.
 """
 import json
 import os
-os.environ["CARTRENDS_IGNORE_DOTENV"] = "1"   # tests never read the owner's .env
+os.environ["CARTRENDS_IGNORE_DOTENV"] = "1"
+os.environ["CARTRENDS_MAINTENANCE"] = "0"    # no background Meta calls in tests   # tests never read the owner's .env
 import subprocess
 import sys
 import tempfile

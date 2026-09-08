@@ -13,7 +13,8 @@ Finally the DM / Reel-comment regressions that must not change.
 import asyncio
 import json
 import os
-os.environ["CARTRENDS_IGNORE_DOTENV"] = "1"   # tests never read the owner's .env
+os.environ["CARTRENDS_IGNORE_DOTENV"] = "1"
+os.environ["CARTRENDS_MAINTENANCE"] = "0"    # no background Meta calls in tests   # tests never read the owner's .env
 import socket
 import subprocess
 import sys
@@ -421,6 +422,166 @@ check("15: DM regression suite is run separately (test_suite.py) - see the repor
 
 # Summary
 print("\n" + "=" * 72)
+
+# ---------------------------------------------------------------------------
+# 16. Self-maintenance: token refresh policy, .env persistence, tunnel
+#     follow-up and webhook self-healing (all against a scripted Graph API)
+# ---------------------------------------------------------------------------
+print("\n--- self-maintenance ---")
+_env_file = os.path.join(tempfile.gettempdir(), f"cartrends_maint_{_RUN}.env")
+with open(_env_file, "w", encoding="utf-8", newline="") as _fh:
+    _fh.write("# local config\r\nVERIFY_TOKEN=abc\r\nINSTAGRAM_ACCESS_TOKEN=OLD-TOKEN-VALUE-0000000000000000\r\nPUBLIC_BASE_URL=https://old.trycloudflare.com\r\n")
+check("16a: .env updater rewrites one key and keeps comments/order/CRLF",
+      config.update_dotenv_value("INSTAGRAM_ACCESS_TOKEN", "NEW-TOKEN-VALUE-1111111111111111", _env_file)
+      and open(_env_file, encoding="utf-8", newline="").read()
+      == "# local config\r\nVERIFY_TOKEN=abc\r\nINSTAGRAM_ACCESS_TOKEN=NEW-TOKEN-VALUE-1111111111111111\r\nPUBLIC_BASE_URL=https://old.trycloudflare.com\r\n"
+      and os.environ.get("INSTAGRAM_ACCESS_TOKEN") == "NEW-TOKEN-VALUE-1111111111111111")
+check("16b: .env updater appends a missing key and reports a missing file",
+      config.update_dotenv_value("NEW_KEY", "v", _env_file)
+      and open(_env_file, encoding="utf-8").read().rstrip().endswith("NEW_KEY=v")
+      and config.update_dotenv_value("X", "y", _env_file + ".missing") is False)
+os.environ.pop("INSTAGRAM_ACCESS_TOKEN", None)
+os.environ.pop("NEW_KEY", None)
+
+_now = int(time.time())
+_saved_flow = config.META_LOGIN_FLOW
+config.META_LOGIN_FLOW = "instagram"
+try:
+    _fresh = {"page_access_token": "T" * 40, "connected_epoch": _now - 3600, "token_expires_at": _now + 59 * 86400}
+    _week = {"page_access_token": "T" * 40, "connected_epoch": _now - 8 * 86400, "token_expires_at": _now + 50 * 86400}
+    _ending = {"page_access_token": "T" * 40, "connected_epoch": _now - 2 * 86400, "token_expires_at": _now + 5 * 86400}
+    _young_ending = {"page_access_token": "T" * 40, "connected_epoch": _now - 3600, "token_expires_at": _now + 5 * 86400}
+    check("16c: refresh policy - not before a day old, weekly, and when <10 days remain",
+          ic.refresh_due(_fresh, _now) is False and ic.refresh_due(_week, _now) is True
+          and ic.refresh_due(_ending, _now) is True and ic.refresh_due(_young_ending, _now) is False
+          and ic.refresh_due({}, _now) is False)
+
+    # scripted Graph API for the maintenance calls
+    _calls = []
+    _state = {"callback": "https://old.trycloudflare.com/webhook", "fields": ["messages", "comments"],
+              "account_fields": ["messages", "comments"], "refresh_ok": True}
+
+    def _fake_graph(method, path, token=None, params=None, data=None, what="request"):
+        _calls.append((method, path, dict(data or {})))
+        if "refresh_access_token" in path:
+            if not _state["refresh_ok"]:
+                raise ic.ConnectError("Meta error during token refresh: too new")
+            return {"access_token": "REFRESHED-TOKEN-2222222222222222", "expires_in": 5184000}
+        if path.endswith("/subscriptions") and method == "GET":
+            return {"data": [{"object": "instagram", "callback_url": _state["callback"],
+                              "fields": [{"name": f, "version": "v26.0"} for f in _state["fields"]]}]}
+        if path.endswith("/subscriptions") and method == "POST":
+            _state["callback"] = data["callback_url"]
+            _state["fields"] = data["fields"].split(",")
+            return {"success": True}
+        if path.endswith("me/subscribed_apps") and method == "GET":
+            return {"data": [{"id": "1", "subscribed_fields": list(_state["account_fields"])}]}
+        if path.endswith("me/subscribed_apps") and method == "POST":
+            _state["account_fields"] = data["subscribed_fields"].split(",")
+            return {"success": True}
+        raise AssertionError(f"unexpected Graph call {method} {path}")
+
+    _real_graph, ic._graph = ic._graph, _fake_graph
+    _real_detect = config.detect_quick_tunnel
+    _saved_base, _saved_dotenv = config.PUBLIC_BASE_URL, config.DOTENV_PATH
+    _saved_token = config.PAGE_ACCESS_TOKEN
+    config.DOTENV_PATH = _env_file
+    try:
+        # token refresh persists to the store AND to .env when env-pinned
+        os.environ["INSTAGRAM_ACCESS_TOKEN"] = "T" * 40
+        ic.save_connection(dict(_week))
+        note = ic.refresh_if_needed(ic.load_connection())
+        stored = ic.load_connection()
+        env_text = open(_env_file, encoding="utf-8").read()
+        check("16d: due refresh stores the new token, rewrites .env and updates the live token",
+              note and note.startswith("token refreshed") and "updated in .env" in note
+              and stored.get("page_access_token") == "REFRESHED-TOKEN-2222222222222222"
+              and "INSTAGRAM_ACCESS_TOKEN=REFRESHED-TOKEN-2222222222222222" in env_text
+              and config.PAGE_ACCESS_TOKEN == "REFRESHED-TOKEN-2222222222222222"
+              and "REFRESHED-TOKEN" not in note, note)
+        check("16e: a fresh token is left alone; a failed refresh is reported, not raised",
+              ic.refresh_if_needed(ic.load_connection()) is None
+              and (_state.update({"refresh_ok": False}) or True)
+              and str(ic.refresh_if_needed(ic.load_connection(), force=True)).startswith("token refresh failed"))
+        _state["refresh_ok"] = True
+
+        # account subscription self-heal
+        _state["account_fields"] = ["messages"]
+        n1 = ic.ensure_account_subscribed("T" * 40)
+        n2 = ic.ensure_account_subscribed("T" * 40)
+        check("16f: missing 'comments' account subscription is re-added once",
+              n1 == "account subscribed to messages + comments" and n2 is None
+              and _state["account_fields"] == ["messages", "comments"])
+
+        # tunnel follow-up + app webhook self-heal
+        config.PUBLIC_BASE_URL = "https://old.trycloudflare.com"
+        config.detect_quick_tunnel = lambda: "https://new-name.trycloudflare.com"
+        t_note = ic.adopt_live_tunnel()
+        w_note = ic.ensure_app_webhook()
+        again = ic.ensure_app_webhook()
+        check("16g: a renamed quick tunnel is followed, written to .env and re-registered with Meta once",
+              t_note == "public address changed: https://old.trycloudflare.com -> https://new-name.trycloudflare.com"
+              and config.PUBLIC_BASE_URL == "https://new-name.trycloudflare.com"
+              and "PUBLIC_BASE_URL=https://new-name.trycloudflare.com" in open(_env_file, encoding="utf-8").read()
+              and w_note and "re-registered at https://new-name.trycloudflare.com/webhook" in w_note
+              and _state["callback"] == "https://new-name.trycloudflare.com/webhook"
+              and again is None, f"{t_note} | {w_note} | {again}")
+        _post = [c for c in _calls if c[0] == "POST" and c[1].endswith("/subscriptions")]
+        check("16h: the webhook registration carries object/callback/verify token/both fields",
+              _post and _post[-1][2]["object"] == "instagram" and _post[-1][2]["verify_token"] == config.VERIFY_TOKEN
+              and set(_post[-1][2]["fields"].split(",")) >= {"messages", "comments"})
+        config.PUBLIC_BASE_URL = "https://bot.cartrends.example"
+        config.detect_quick_tunnel = lambda: "https://other.trycloudflare.com"
+        check("16i: a real domain is never overridden by a quick tunnel",
+              ic.adopt_live_tunnel() is None and config.PUBLIC_BASE_URL == "https://bot.cartrends.example")
+        config.PUBLIC_BASE_URL = "http://localhost:8000"
+        check("16j: no Meta registration is attempted for a localhost address", ic.ensure_app_webhook() is None)
+        config.PUBLIC_BASE_URL = "https://new-name.trycloudflare.com"
+        config.detect_quick_tunnel = lambda: ""
+        notes = ic.maintain()
+        check("16k: a full maintenance pass with everything in order is silent and never raises",
+              notes == [], str(notes))
+        # hosted deployments: the refreshed token must win over the stale variable
+        os.environ["INSTAGRAM_ACCESS_TOKEN"] = "STALE-ENV-TOKEN-333333333333333333"
+        config.DOTENV_PATH = _env_file + ".absent"          # no .env to rewrite (Railway-like)
+        ic.save_connection({"page_access_token": "STALE-ENV-TOKEN-333333333333333333", "connected_epoch": _now - 8 * 86400,
+                            "token_expires_at": _now + 50 * 86400, "instagram_account_id": "17841400000000000",
+                            "instagram_username": "cartrendscarmall"})
+        r_note = ic.refresh_if_needed(ic.load_connection())
+        _st = ic.load_connection()
+        check("16m: without a .env the refreshed token is kept in the store and marked as superseding the variable",
+              r_note and r_note.startswith("token refreshed") and "hosted deployment" in r_note
+              and _st.get("page_access_token") == "REFRESHED-TOKEN-2222222222222222"
+              and _st.get("supersedes_env_token") == ic.token_fingerprint("STALE-ENV-TOKEN-333333333333333333")
+              and "STALE-ENV" not in r_note and "REFRESHED-TOKEN" not in r_note, r_note)
+        os.environ["INSTAGRAM_ACCESS_TOKEN"] = "STALE-ENV-TOKEN-333333333333333333"
+        config.PAGE_ACCESS_TOKEN = "STALE-ENV-TOKEN-333333333333333333"
+        a_note = ic.adopt_env_token()
+        check("16n: at the next start the stale variable yields to the refreshed token without calling Meta",
+              a_note.startswith("environment token was refreshed earlier")
+              and config.PAGE_ACCESS_TOKEN == "REFRESHED-TOKEN-2222222222222222"
+              and "REFRESHED-TOKEN" not in a_note and "STALE-ENV" not in a_note, a_note)
+        os.environ["INSTAGRAM_ACCESS_TOKEN"] = "BRAND-NEW-ENV-TOKEN-4444444444444444"
+        check("16o: a genuinely new variable value is not overridden by the store",
+              ic.superseding_token() == "")
+        config.DOTENV_PATH = _env_file
+        check("16l: the maintenance thread starts once only",
+              ic.start_maintenance_thread(interval=3600, first_delay=3600) is True
+              and ic.start_maintenance_thread() is False)
+    finally:
+        ic._graph = _real_graph
+        config.detect_quick_tunnel = _real_detect
+        config.PUBLIC_BASE_URL, config.DOTENV_PATH = _saved_base, _saved_dotenv
+        config.PAGE_ACCESS_TOKEN = _saved_token
+        os.environ.pop("INSTAGRAM_ACCESS_TOKEN", None)
+        ic.clear_connection() if hasattr(ic, "clear_connection") else None
+finally:
+    config.META_LOGIN_FLOW = _saved_flow
+try:
+    os.remove(_env_file)
+except OSError:
+    pass
+
 failed = [(n, d) for n, ok, d in RESULTS if not ok]
 print(f" connect checks: {len(RESULTS) - len(failed)}/{len(RESULTS)} passed")
 for n, d in failed:

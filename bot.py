@@ -838,6 +838,14 @@ def on_startup() -> None:
     if not config.dashboard_is_configured():
         print("[STARTUP] DASHBOARD_PASSWORD is not set - "
               "the owner dashboard will refuse every request.")
+    # Self-maintenance: token refresh, tunnel follow-up, webhook re-registration.
+    if os.getenv("CARTRENDS_MAINTENANCE", "1") == "1":
+        try:
+            import instagram_connect as _ic
+            if _ic.start_maintenance_thread():
+                print("[STARTUP] self-maintenance thread started (token refresh, webhook check)")
+        except Exception as _maint_error:      # pragma: no cover - defensive only
+            print(f"[STARTUP] self-maintenance unavailable: {_maint_error!r}")
 
 
 # ---------------------------------------------------------------------------

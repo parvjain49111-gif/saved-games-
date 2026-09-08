@@ -294,6 +294,26 @@ def token_pinned_by_environment() -> bool:
                                    or os.getenv("ACCESS_TOKEN", "")))
 
 
+def token_fingerprint(token: str) -> str:
+    """Stable, non-reversible id for a token (never the token itself)."""
+    return hashlib.sha256((token or "").encode()).hexdigest()[:24]
+
+
+def superseding_token() -> str:
+    """When the environment still carries a token that the bot has since
+    refreshed (hosted deployments cannot rewrite their own variables), the
+    refreshed token from the connection store is the one to use."""
+    key = env_token_key()
+    if not key:
+        return ""
+    conn = load_connection()
+    stored = config.clean_token(conn.get("page_access_token"))
+    if stored and conn.get("supersedes_env_token") == token_fingerprint(os.getenv(key, "")) \
+            and stored != os.getenv(key, ""):
+        return stored
+    return ""
+
+
 def adopt_env_token() -> str:
     """A token supplied through the environment (generated in the Meta
     dashboard) is verified against Meta and the account identity is filled in
@@ -302,6 +322,22 @@ def adopt_env_token() -> str:
     token = current_token()
     if not token or not token_pinned_by_environment():
         return ""
+    newer = superseding_token()
+    if newer:
+        config.PAGE_ACCESS_TOKEN = newer
+        try:
+            import bot
+            bot.PAGE_ACCESS_TOKEN = newer
+        except Exception:
+            pass
+        conn = load_connection()
+        if conn.get("instagram_account_id") and not os.getenv("INSTAGRAM_ACCOUNT_ID"):
+            config.INSTAGRAM_ACCOUNT_ID = str(conn["instagram_account_id"])
+        if conn.get("instagram_username") and not os.getenv("INSTAGRAM_USERNAME"):
+            config.INSTAGRAM_USERNAME = str(conn["instagram_username"]).lstrip("@").lower()
+        return (f"environment token was refreshed earlier - using the stored token for "
+                f"@{config.INSTAGRAM_USERNAME or '?'} (valid until "
+                f"{time.strftime('%Y-%m-%d', time.localtime(int(conn.get('token_expires_at') or 0)))})")
     if config.INSTAGRAM_ACCOUNT_ID and config.INSTAGRAM_USERNAME:
         return f"token from environment for @{config.INSTAGRAM_USERNAME}"
     try:
@@ -317,7 +353,41 @@ def adopt_env_token() -> str:
     exp = expected_username()
     if exp and uname and uname != exp:
         return f"WARNING: the environment token belongs to @{uname}, expected @{exp}"
+    _mirror_env_token(token, ig_id, uname)
     return f"token from environment verified for @{uname or '?'} (id {mask_id(ig_id)})"
+
+
+ENV_TOKEN_KEYS = ("PAGE_ACCESS_TOKEN", "INSTAGRAM_ACCESS_TOKEN", "ACCESS_TOKEN")
+ASSUMED_TOKEN_LIFETIME = 59 * 86400      # dashboard tokens last 60 days; stay conservative
+REFRESH_AFTER = 7 * 86400                # keep the 60-day window rolling every week
+REFRESH_WHEN_LEFT = 10 * 86400           # ...and always when fewer than 10 days remain
+
+
+def env_token_key() -> str:
+    """Which environment variable carries the token (first one set wins)."""
+    for key in ENV_TOKEN_KEYS:
+        if config.clean_token(os.getenv(key, "")):
+            return key
+    return ""
+
+
+def _mirror_env_token(token: str, ig_id: str, uname: str) -> None:
+    """A token pasted into .env is recorded in the connection store (same
+    private file the OAuth flow uses) so refresh_if_needed() can track its
+    age. A token already known keeps its recorded age and expiry."""
+    conn = load_connection()
+    if conn.get("page_access_token") == token:
+        return
+    now = int(time.time())
+    conn.update({"flow": "instagram", "source": "environment", "page_access_token": token,
+                 "instagram_account_id": ig_id or conn.get("instagram_account_id", ""),
+                 "instagram_username": uname or conn.get("instagram_username", ""),
+                 "connected_epoch": now, "token_expires_at": now + ASSUMED_TOKEN_LIFETIME,
+                 "scopes": conn.get("scopes") or list(REQUIRED_SCOPES_IG)})
+    try:
+        save_connection(conn)
+    except Exception as error:               # never let bookkeeping stop the bot
+        _log(f"could not record the environment token: {type(error).__name__}")
 
 
 # ---------------------------------------------------------------------------
@@ -545,29 +615,175 @@ def account_identity(ig_id: str, page_token: str) -> Dict[str, Any]:
         "fields": "id,username,name,followers_count,media_count"}, what="account lookup")
 
 
-def refresh_if_needed(conn: Dict[str, Any]) -> Optional[str]:
-    """Instagram-login tokens last 60 days and can be refreshed once they are
-    a day old. Refresh when fewer than 10 days remain; returns a note."""
+def refresh_due(conn: Dict[str, Any], now: Optional[float] = None) -> bool:
+    """Instagram-login tokens last 60 days and may be refreshed once they are
+    a day old. Refresh weekly (keeps the window rolling even across outages)
+    and always when fewer than 10 days remain."""
+    now = time.time() if now is None else now
     if flow() != "instagram" or not conn.get("page_access_token"):
-        return None
+        return False
+    since = int(conn.get("connected_epoch") or 0)
     exp = int(conn.get("token_expires_at") or 0)
-    if not exp:
+    if not since or now - since < 86400:
+        return False                          # Meta refuses tokens younger than a day
+    return (now - since >= REFRESH_AFTER) or (bool(exp) and exp - now < REFRESH_WHEN_LEFT)
+
+
+def refresh_if_needed(conn: Dict[str, Any], force: bool = False) -> Optional[str]:
+    """Refresh the stored token when due. The new token replaces the old one
+    in the connection store and, when the token was supplied through .env,
+    in that file too - so a restart never resurrects an expired token."""
+    if not force and not refresh_due(conn):
         return None
-    age_ok = time.time() - (conn.get("connected_epoch") or 0) > 86400
-    if exp - time.time() > 10 * 86400 or not age_ok:
+    if not conn.get("page_access_token"):
         return None
     try:
         res = _graph("GET", f"{_IG_GRAPH}/refresh_access_token", token=conn["page_access_token"],
                      params={"grant_type": "ig_refresh_token"}, what="token refresh")
     except ConnectError as error:
         return f"token refresh failed: {error}"
-    if res.get("access_token"):
-        conn["page_access_token"] = res["access_token"]
-        conn["token_expires_at"] = int(time.time()) + int(res.get("expires_in") or 0)
-        conn["connected_epoch"] = int(time.time())
-        save_connection(conn)
-        return "token refreshed"
-    return None
+    new_token = config.clean_token(res.get("access_token"))
+    if not new_token:
+        return "token refresh returned no token"
+    now = int(time.time())
+    key = env_token_key()
+    if key:
+        # A hosted deployment (Railway etc.) keeps the ORIGINAL token in its
+        # variables for ever. Remember its fingerprint so the next start knows
+        # the environment token is stale and uses this refreshed one instead.
+        conn["supersedes_env_token"] = token_fingerprint(os.getenv(key, ""))
+    conn["page_access_token"] = new_token
+    conn["token_expires_at"] = now + int(res.get("expires_in") or ASSUMED_TOKEN_LIFETIME)
+    conn["connected_epoch"] = now
+    save_connection(conn)
+    note = f"token refreshed (valid until {time.strftime('%Y-%m-%d', time.localtime(conn['token_expires_at']))})"
+    if key:
+        if config.update_dotenv_value(key, new_token):
+            note += f"; {key} updated in .env"
+        else:
+            note += (f"; {key} lives in the process environment (hosted deployment) - "
+                     "the refreshed token is kept in the connection store and used at the next start")
+        os.environ[key] = new_token
+        config.PAGE_ACCESS_TOKEN = new_token
+        try:
+            import bot
+            bot.PAGE_ACCESS_TOKEN = new_token
+        except Exception:
+            pass
+    return note
+
+
+def ensure_account_subscribed(token: str) -> Optional[str]:
+    """The account must be subscribed to this app's webhooks (Instagram flow)."""
+    if flow() != "instagram" or not token:
+        return None
+    try:
+        apps = _graph("GET", _ig("me/subscribed_apps"), token=token,
+                      what="account subscription lookup").get("data") or []
+        fields = {f for a in apps for f in (a.get("subscribed_fields") or [])}
+        if "messages" in fields and "comments" in fields:
+            return None
+        _graph("POST", _ig("me/subscribed_apps"), token=token,
+               data={"subscribed_fields": "messages,comments"}, what="account webhook subscription")
+        return "account subscribed to messages + comments"
+    except ConnectError as error:
+        return f"account subscription check failed: {error}"
+
+
+def app_webhook_state() -> Tuple[str, List[str]]:
+    """(callback_url, fields) of the app-level 'instagram' webhook subscription."""
+    subs = _graph("GET", f"https://graph.facebook.com/{config.GRAPH_API_VERSION}/{config.META_APP_ID}/subscriptions",
+                  token=_app_token(), what="app subscriptions").get("data") or []
+    for sub in subs:
+        if sub.get("object") == "instagram":
+            fields = [f.get("name") if isinstance(f, dict) else str(f) for f in (sub.get("fields") or [])]
+            return str(sub.get("callback_url") or ""), fields
+    return "", []
+
+
+def ensure_app_webhook() -> Optional[str]:
+    """Self-heal the app-level webhook: when the public address changed (a
+    Cloudflare quick tunnel gets a new name at every start) re-register the
+    callback URL with Meta, which verifies it against this server at once.
+    Needs the Meta app secret; without it the dashboard must be edited by hand."""
+    if not (config.META_APP_ID and config.META_APP_SECRET and config.PUBLIC_BASE_URL):
+        return None
+    if "localhost" in config.PUBLIC_BASE_URL or "127.0.0.1" in config.PUBLIC_BASE_URL:
+        return None
+    wanted = f"{config.PUBLIC_BASE_URL.rstrip('/')}/webhook"
+    try:
+        current, fields = app_webhook_state()
+    except ConnectError as error:
+        return (f"app webhook check failed: {error} - if this mentions an invalid token, APP_SECRET in .env "
+                "is not the Meta app secret (App Dashboard > App settings > Basic > App secret)")
+    need = {"messages", "comments"}
+    if current == wanted and need <= set(fields):
+        return None
+    all_fields = sorted(need | set(fields))
+    try:
+        _graph("POST", f"https://graph.facebook.com/{config.GRAPH_API_VERSION}/{config.META_APP_ID}/subscriptions",
+               token=_app_token(),
+               data={"object": "instagram", "callback_url": wanted, "verify_token": config.VERIFY_TOKEN,
+                     "fields": ",".join(all_fields), "include_values": "true"},
+               what="app webhook registration")
+    except ConnectError as error:
+        return f"app webhook re-registration FAILED ({error}); fix it in the App Dashboard: {wanted}"
+    return f"app webhook re-registered at {wanted} for {all_fields}"
+
+
+def adopt_live_tunnel() -> Optional[str]:
+    """A restarted quick tunnel has a new hostname: follow it."""
+    live = config.detect_quick_tunnel()
+    if not live or live == config.PUBLIC_BASE_URL:
+        return None
+    if not ("trycloudflare.com" in config.PUBLIC_BASE_URL or "localhost" in config.PUBLIC_BASE_URL
+            or "127.0.0.1" in config.PUBLIC_BASE_URL):
+        return None                           # a real domain is never overridden
+    old = config.PUBLIC_BASE_URL
+    config.PUBLIC_BASE_URL = live
+    config.update_dotenv_value("PUBLIC_BASE_URL", live)
+    return f"public address changed: {old} -> {live}"
+
+
+def maintain() -> List[str]:
+    """One self-maintenance pass (startup + every few hours): follow the
+    tunnel, keep the token fresh, keep both webhook subscriptions in place.
+    Never raises; returns the notes worth logging."""
+    notes: List[str] = []
+    for step in (adopt_live_tunnel,
+                 lambda: refresh_if_needed(load_connection()),
+                 lambda: ensure_account_subscribed(current_token()),
+                 ensure_app_webhook):
+        try:
+            note = step()
+        except Exception as error:            # pragma: no cover - defensive
+            note = f"maintenance step failed: {type(error).__name__}: {error}"
+        if note:
+            notes.append(note)
+    return notes
+
+
+_maintenance_started = False
+
+
+def start_maintenance_thread(interval: int = 6 * 3600, first_delay: int = 20) -> bool:
+    """Run maintain() in the background: first shortly after startup (the
+    server must already be listening, because Meta verifies the callback URL
+    synchronously), then every `interval` seconds."""
+    global _maintenance_started
+    if _maintenance_started:
+        return False
+    _maintenance_started = True
+
+    def loop() -> None:
+        time.sleep(first_delay)
+        while True:
+            for note in maintain():
+                print(f"[MAINTAIN] {note}", flush=True)
+            time.sleep(interval)
+
+    threading.Thread(target=loop, name="cartrends-maintenance", daemon=True).start()
+    return True
 
 
 def missing_scopes(granted: List[str]) -> List[str]:
