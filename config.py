@@ -231,6 +231,8 @@ def _load_stored_connection() -> None:
     that the environment did not set. The environment always wins."""
     global PAGE_ACCESS_TOKEN, INSTAGRAM_ACCOUNT_ID, INSTAGRAM_USERNAME, PAGE_ID
     try:
+        if os.getenv("CARTRENDS_IGNORE_DOTENV") == "1" and not os.getenv("CONNECTION_FILE"):
+            return                   # a test run must never pick up the owner's real token
         if not os.path.exists(CONNECTION_FILE):
             return
         import json

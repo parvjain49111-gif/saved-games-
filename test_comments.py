@@ -27,6 +27,7 @@ for _x in ("", "-wal", "-shm"):
     if os.path.exists(_TMP + _x):
         os.remove(_TMP + _x)
 os.environ["DB_PATH"] = _TMP
+os.environ["CONNECTION_FILE"] = _TMP + ".connection.json"   # never the owner's real connection store
 sys.path.insert(0, HERE)
 
 import config                      # noqa: E402
