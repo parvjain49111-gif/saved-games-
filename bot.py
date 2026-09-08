@@ -907,7 +907,8 @@ if __name__ == "__main__":
           f"{'configured' if config.send_is_configured() else 'NOT SET'}")
     print(f" Dashboard      : "
           f"{'/dashboard' if config.dashboard_is_configured() else 'DISABLED (set DASHBOARD_PASSWORD)'}")
-    print(" Listening on   : http://0.0.0.0:8000")
+    _port = int(os.getenv("PORT", "8000"))      # hosts (Railway etc.) assign the port
+    print(f" Listening on   : http://0.0.0.0:{_port}")
     print(" Webhook path   : /webhook")
     print("=" * 72 + "\n")
 
@@ -916,4 +917,4 @@ if __name__ == "__main__":
     # access_log=False: uvicorn's access log would otherwise record the
     # webhook verify token and OAuth authorization codes from query strings.
     # (When starting with the uvicorn command, add --no-access-log.)
-    uvicorn.run("bot:app", host="0.0.0.0", port=8000, reload=False, access_log=False)
+    uvicorn.run("bot:app", host="0.0.0.0", port=_port, reload=False, access_log=False)
