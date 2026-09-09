@@ -500,6 +500,20 @@ _RATE_LIMIT_CODES = {4, 17, 32, 613, 80002, 80007}
 _RETRY_DELAYS = (2, 5, 10)
 
 
+def meta_block_note(code: Optional[int], message: str) -> str:
+    """Meta answers an account-level security checkpoint with code 200 and the
+    text "API access blocked." for EVERY endpoint, including reading the
+    profile. Nothing in this bot can clear it: the account owner has to sign in
+    to Instagram or Meta and pass the identity check. Say so plainly, because
+    the symptom on Instagram is simply that the bot went quiet."""
+    if code == 200 and "api access blocked" in (message or "").lower():
+        return ("Meta has blocked API access for this account (an account security "
+                "checkpoint). Replies cannot be sent until the owner signs in at "
+                "instagram.com or developers.facebook.com and completes the identity "
+                "check Meta asks for. No change to this bot can lift it.")
+    return ""
+
+
 def _graph_post(url: str, body: Dict[str, Any], what: str,
                 form: bool = False) -> Optional[Dict[str, Any]]:
     """POST to the Graph API with retries on rate limits. Returns the JSON
@@ -519,12 +533,16 @@ def _graph_post(url: str, body: Dict[str, Any], what: str,
                 return response.json() if response.text else {}
             except ValueError:
                 return {}
-        code = None
+        code, message = None, ""
         try:
-            code = (response.json().get("error") or {}).get("code")
+            error = response.json().get("error") or {}
+            code, message = error.get("code"), str(error.get("message") or "")
         except ValueError:
             pass
         print(f"[COMMENT] Meta returned HTTP {response.status_code} for {what}: {response.text[:300]}")
+        note = meta_block_note(code, message)
+        if note:
+            print(f"[META] {note}")
         if code not in _RATE_LIMIT_CODES:
             return None                       # a real refusal - retrying will not help
     return None

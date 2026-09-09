@@ -582,6 +582,26 @@ try:
 except OSError:
     pass
 
+
+# ---------------------------------------------------------------------------
+# 17. Meta's account-level security checkpoint ("API access blocked", code 200)
+#     must be reported as a checkpoint, not as a missing permission.
+# ---------------------------------------------------------------------------
+print("\n--- account security checkpoint ---")
+check("17a: code 200 + 'API access blocked.' is explained as a checkpoint the owner must clear",
+      ic._friendly(200, "API access blocked.", "identity") == ic.BLOCKED_NOTE
+      and "security checkpoint" in ic.BLOCKED_NOTE and "instagram.com" in ic.BLOCKED_NOTE)
+check("17b: an ordinary code 200 is still reported as a missing permission",
+      ic._friendly(200, "(#200) Requires instagram_business_basic", "identity") == ic._FRIENDLY[200])
+check("17c: unknown codes keep Meta's own wording, truncated",
+      ic._friendly(999, "Something odd happened", "identity").endswith("Something odd happened")
+      and ic._friendly(190, "expired", "identity") == ic._FRIENDLY[190])
+check("17d: the sender logs the same explanation for a blocked account",
+      bot.meta_block_note(200, "API access blocked.").startswith("Meta has blocked API access")
+      and bot.meta_block_note(200, "(#200) missing permission") == ""
+      and bot.meta_block_note(4, "API access blocked.") == ""
+      and bot.meta_block_note(None, "") == "")
+
 failed = [(n, d) for n, ok, d in RESULTS if not ok]
 print(f" connect checks: {len(RESULTS) - len(failed)}/{len(RESULTS)} passed")
 for n, d in failed:

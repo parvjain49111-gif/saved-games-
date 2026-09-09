@@ -154,6 +154,8 @@ _FRIENDLY = {
     190: "The access token is invalid or expired. Please connect again.",
     10: "Meta refused the request: a required permission is missing (App Review / Advanced Access may be needed).",
     200: "Meta refused the request: a required permission is missing.",
+    # 200 is also what Meta returns for an account-level security checkpoint,
+    # with the message "API access blocked." - see _friendly() below.
     100: "Meta rejected the request parameters (wrong account, API version or field).",
     4: "Meta rate limit reached - wait a few minutes and try again.",
     17: "Meta rate limit reached - wait a few minutes and try again.",
@@ -188,8 +190,22 @@ def _graph(method: str, path: str, token: Optional[str] = None,
         message = err.get("message") or f"HTTP {r.status_code}"
         _log(f"{what} failed: HTTP {r.status_code} code={code} type={err.get('type')} "
              f"subcode={err.get('error_subcode')} message={message[:160]}")
-        raise ConnectError(_FRIENDLY.get(code, f"Meta error during {what}: {message[:160]}"))
+        raise ConnectError(_friendly(code, message, what))
     return body if isinstance(body, dict) else {"data": body}
+
+
+BLOCKED_NOTE = ("Meta has blocked API access for this account (an account security "
+                "checkpoint). Sign in at instagram.com or developers.facebook.com with "
+                "the account that owns the app and complete the identity check Meta "
+                "asks for; access returns as soon as it is cleared. No change to this "
+                "bot can lift it.")
+
+
+def _friendly(code: Optional[int], message: str, what: str) -> str:
+    """Turn a Meta error into one sentence the owner can act on."""
+    if code == 200 and "api access blocked" in (message or "").lower():
+        return BLOCKED_NOTE
+    return _FRIENDLY.get(code, f"Meta error during {what}: {message[:160]}")
 
 
 def _app_token() -> str:

@@ -12,12 +12,18 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 SRC = os.path.join(HERE, ".env")
 DST = os.path.join(HERE, ".env.railway")
 DROP = {"PUBLIC_BASE_URL", "PORT", "OLLAMA_URL", "OLLAMA_MODEL"}
+# Set VOLUME_PATH to a Railway volume mount (e.g. "/data") once one is
+# attached, so the conversation database and the token store survive
+# redeploys. Without it both live on the container's own disk and reset
+# whenever the service is redeployed.
+VOLUME_PATH = os.getenv("VOLUME_PATH", "").rstrip("/")
 OVERRIDE = {
-    "DB_PATH": "/data/cartrends.db",
-    "CONNECTION_FILE": "/data/instagram_connection.json",
     "CARTRENDS_MAINTENANCE": "1",
     "PYTHONUNBUFFERED": "1",
 }
+if VOLUME_PATH:
+    OVERRIDE["DB_PATH"] = f"{VOLUME_PATH}/cartrends.db"
+    OVERRIDE["CONNECTION_FILE"] = f"{VOLUME_PATH}/instagram_connection.json"
 
 
 def main() -> int:
