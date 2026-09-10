@@ -602,6 +602,115 @@ check("17d: the sender logs the same explanation for a blocked account",
       and bot.meta_block_note(4, "API access blocked.") == ""
       and bot.meta_block_note(None, "") == "")
 
+
+# ---------------------------------------------------------------------------
+# 18. The hosted model (Gemini). It may only choose WORDING - every fact still
+#     comes from the approved knowledge base, and the key never leaks.
+# ---------------------------------------------------------------------------
+print("\n--- hosted model (Gemini) ---")
+import brain  # noqa: E402
+
+_FAKE_KEY = "AIzaFAKEKEYFORTESTSONLY-0000000000000"
+
+
+class _GemResp:
+    def __init__(self, status, payload=None, text=""):
+        self.status_code, self._payload, self.text = status, payload, text
+
+    def json(self):
+        if self._payload is None:
+            raise ValueError("not json")
+        return self._payload
+
+
+_gem_calls = []
+
+
+def _fake_post(url, json=None, timeout=None, headers=None, **kw):
+    _gem_calls.append({"url": url, "json": json, "headers": headers or {}})
+    return _gem_state["response"]
+
+
+_gem_state = {"response": _GemResp(200, {"candidates": [
+    {"content": {"parts": [{"text": "Sure - please DM us your car model."}]}}]})}
+
+_real_post, brain.requests.post = brain.requests.post, _fake_post
+_real_key, _real_model = config.GEMINI_API_KEY, config.GEMINI_MODEL
+config.GEMINI_API_KEY = _FAKE_KEY
+os.environ.pop("AI_PROVIDER", None)
+try:
+    _reply, _ok = brain.ask_gemini("ppf ka kya rate hai")
+    check("18a: a normal Gemini answer is returned",
+          _ok is True and _reply == "Sure - please DM us your car model.")
+    _call = _gem_calls[-1]
+    check("18b: the key travels in a header, never in the URL",
+          _FAKE_KEY not in _call["url"] and _call["headers"].get("x-goog-api-key") == _FAKE_KEY
+          and config.GEMINI_MODEL in _call["url"])
+    check("18c: the model is bound by the same verified-facts system prompt",
+          _call["json"]["systemInstruction"]["parts"][0]["text"] == brain.SYSTEM_PROMPT)
+
+    _gem_state["response"] = _GemResp(429, {"error": {"message": f"quota exceeded for key {_FAKE_KEY}"}})
+    _reply, _ok = brain.ask_gemini("hello")
+    check("18d: an API error is reported as a failure, not as an answer",
+          _ok is False and _reply == brain.OFFLINE_REPLY)
+    check("18e: the key is masked out of Google's error text",
+          _FAKE_KEY not in brain._gemini_error(_gem_state["response"]))
+
+    _gem_state["response"] = _GemResp(200, {"promptFeedback": {"blockReason": "SAFETY"}})
+    check("18f: a blocked prompt yields no answer rather than an empty message",
+          brain.ask_gemini("hello") == (brain.OFFLINE_REPLY, False))
+
+    _gem_state["response"] = _GemResp(200, None, text="<html>gateway</html>")
+    check("18g: a non-JSON response is survived",
+          brain.ask_gemini("hello") == (brain.OFFLINE_REPLY, False))
+
+    def _boom(*a, **k):
+        raise brain.requests.exceptions.Timeout()
+    brain.requests.post = _boom
+    check("18h: a timeout is survived", brain.ask_gemini("hello") == (brain.OFFLINE_REPLY, False))
+    brain.requests.post = _fake_post
+    _gem_state["response"] = _GemResp(200, {"candidates": [
+        {"content": {"parts": [{"text": "Sure - please DM us your car model."}]}}]})
+
+    # Routing: one entry point, whichever model this deployment uses.
+    _used = []
+    _real_ollama = brain.ask_ollama
+    brain.ask_ollama = lambda m, n="": (_used.append("ollama") or ("local answer", True))
+    try:
+        _used.clear()
+        os.environ["AI_PROVIDER"] = "ollama"
+        brain.ask_ai("hi")
+        check("18i: AI_PROVIDER=ollama uses the local model", _used == ["ollama"])
+
+        _used.clear()
+        os.environ["AI_PROVIDER"] = "gemini"
+        _r, _o = brain.ask_ai("hi")
+        check("18j: AI_PROVIDER=gemini uses Gemini", _used == [] and _o and _r.startswith("Sure"))
+
+        _used.clear()
+        os.environ["AI_PROVIDER"] = "none"
+        check("18k: AI_PROVIDER=none asks no model at all",
+              brain.ask_ai("hi") == (brain.OFFLINE_REPLY, False) and _used == [])
+
+        _used.clear()
+        os.environ["AI_PROVIDER"] = "gemini"
+        _gem_state["response"] = _GemResp(500, {"error": {"message": "server error"}})
+        _r, _o = brain.ask_ai("hi")
+        check("18l: when Gemini fails the local model still answers if it can",
+              _used == ["ollama"] and _r == "local answer" and _o is True)
+    finally:
+        brain.ask_ollama = _real_ollama
+        os.environ.pop("AI_PROVIDER", None)
+
+    check("18m: no key means Gemini is never called",
+          (setattr(config, "GEMINI_API_KEY", "") or True)
+          and brain.ask_gemini("hi") == (brain.OFFLINE_REPLY, False)
+          and config.ai_provider() == "ollama")
+finally:
+    brain.requests.post = _real_post
+    config.GEMINI_API_KEY, config.GEMINI_MODEL = _real_key, _real_model
+    os.environ.pop("AI_PROVIDER", None)
+
 failed = [(n, d) for n, ok, d in RESULTS if not ok]
 print(f" connect checks: {len(RESULTS) - len(failed)}/{len(RESULTS)} passed")
 for n, d in failed:

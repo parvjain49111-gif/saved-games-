@@ -1500,6 +1500,90 @@ def ask_ollama(user_message: str, context_note: str = "") -> Tuple[str, bool]:
 
 
 # ===========================================================================
+# GEMINI CLIENT
+# ===========================================================================
+def ask_gemini(user_message: str, context_note: str = "") -> Tuple[str, bool]:
+    """Ask Google's hosted model. Returns (reply, succeeded).
+
+    Same contract as ask_ollama(): the model is given the identical system
+    prompt, so it is bound by the same rule that only the verified facts above
+    may be stated, and the caller fact-checks the wording afterwards either
+    way. succeeded is False whenever nothing usable came back.
+    """
+    if not config.GEMINI_API_KEY:
+        return OFFLINE_REPLY, False
+    prompt = user_message
+    if context_note:
+        prompt = f"{context_note}\n\nCustomer's message: {user_message}"
+    url = f"{config.GEMINI_URL}/{config.GEMINI_MODEL}:generateContent"
+    body = {
+        "systemInstruction": {"parts": [{"text": SYSTEM_PROMPT}]},
+        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+        "generationConfig": {"temperature": 0.6, "maxOutputTokens": 220,
+                             "topK": 20, "topP": 0.9},
+    }
+    try:
+        # The key travels in a header, never in the URL, so it cannot be
+        # captured by an access log or a proxy that records query strings.
+        r = requests.post(url, json=body, timeout=config.GEMINI_TIMEOUT,
+                          headers={"x-goog-api-key": config.GEMINI_API_KEY,
+                                   "Content-Type": "application/json"})
+        if r.status_code != 200:
+            print(f"[GEMINI] HTTP {r.status_code}: {_gemini_error(r)}")
+            return OFFLINE_REPLY, False
+        data = r.json()
+        candidates = data.get("candidates") or []
+        if not candidates:
+            # A blocked prompt has no candidate at all, only a reason.
+            reason = ((data.get("promptFeedback") or {}).get("blockReason")
+                      or "no candidates")
+            print(f"[GEMINI] nothing returned ({reason})")
+            return OFFLINE_REPLY, False
+        parts = ((candidates[0].get("content") or {}).get("parts")) or []
+        reply = " ".join((p.get("text") or "") for p in parts).strip()
+        return (reply, True) if reply else (OFFLINE_REPLY, False)
+    except requests.exceptions.Timeout:
+        print("[GEMINI] timed out")
+    except requests.exceptions.ConnectionError:
+        print("[GEMINI] could not reach the Gemini API")
+    except ValueError:
+        print("[GEMINI] response was not JSON")
+    except Exception as error:        # never let the bot die on a model error
+        print(f"[GEMINI] unexpected error: {error!r}")
+    return OFFLINE_REPLY, False
+
+
+def _gemini_error(response) -> str:
+    """Google's error message, never the key that was sent with it."""
+    try:
+        message = str(((response.json() or {}).get("error") or {}).get("message") or "")
+    except ValueError:
+        message = (response.text or "")[:160]
+    return message.replace(config.GEMINI_API_KEY, "<key>")[:160] if config.GEMINI_API_KEY \
+        else message[:160]
+
+
+def ask_ai(user_message: str, context_note: str = "") -> Tuple[str, bool]:
+    """Ask whichever model this deployment is configured to use.
+
+    One entry point, so the pipeline neither knows nor cares whether the
+    wording came from a laptop or from Google - and the fact check that
+    follows is the same in both cases.
+    """
+    provider = config.ai_provider()
+    if provider == "none":
+        return OFFLINE_REPLY, False
+    if provider == "gemini":
+        reply, ok = ask_gemini(user_message, context_note)
+        if ok:
+            return reply, True
+        # A hosted model that is down must not silence the bot when a local
+        # one is available.
+        return ask_ollama(user_message, context_note)
+    return ask_ollama(user_message, context_note)
+
+
+# ===========================================================================
 # THE RESULT OBJECT
 # ===========================================================================
 @dataclass
@@ -2504,7 +2588,7 @@ def answer(message: str, conversation_id: Optional[str] = None,
     note = ""
     if model:
         note = f"(The customer drives a {brand or ''} {model}.)".strip()
-    reply, ok = ask_ollama(message, note)
+    reply, ok = ask_ai(message, note)
 
     # FACT CHECK the model's wording before it reaches a customer. If it
     # invented a price, a warranty, stock or a website, the whole reply is

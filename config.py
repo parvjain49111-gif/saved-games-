@@ -278,6 +278,39 @@ OLLAMA_TIMEOUT: Tuple[int, int] = (10, 180)
 OLLAMA_KEEP_ALIVE: str = os.getenv("OLLAMA_KEEP_ALIVE", "30m")
 
 # ---------------------------------------------------------------------------
+# GOOGLE GEMINI (the hosted model)
+# ---------------------------------------------------------------------------
+# Ollama runs on the owner's own PC, so a bot hosted in the cloud has no model
+# at all and answers only from rules and approved FAQs. Gemini fills that gap.
+# Whichever model is used, it may only choose WORDING: every fact still comes
+# from the approved knowledge base, and a reply that invents a price, warranty,
+# duration or stock is thrown away before a customer sees it.
+GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
+GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+GEMINI_URL: str = os.getenv(
+    "GEMINI_URL", "https://generativelanguage.googleapis.com/v1beta/models")
+GEMINI_TIMEOUT: Tuple[int, int] = (10, 45)
+# auto  - Gemini when a key is set, else Ollama
+# gemini / ollama / none - forced
+AI_PROVIDER: str = (os.getenv("AI_PROVIDER", "").strip().lower()
+                    or ("gemini" if GEMINI_API_KEY else "ollama"))
+
+
+def ai_provider() -> str:
+    """Which model answers right now.
+
+    Only an explicit AI_PROVIDER forces the choice; otherwise it is decided
+    from the key at call time, so adding a key (or a test setting one) takes
+    effect without a restart.
+    """
+    forced = os.getenv("AI_PROVIDER", "").strip().lower()
+    if forced in ("gemini", "ollama", "none"):
+        if forced == "gemini" and not GEMINI_API_KEY:
+            return "ollama"          # asked for Gemini without a key
+        return forced
+    return "gemini" if GEMINI_API_KEY else "ollama"
+
+# ---------------------------------------------------------------------------
 # DATABASE
 # ---------------------------------------------------------------------------
 # SQLite is used because it needs no server process, handles the volume a
