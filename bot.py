@@ -72,6 +72,7 @@ import hmac        # verify Meta's request signature (security)
 import hashlib     # the SHA-256 hashing algorithm used by that signature
 import textwrap    # neatly wrap long AI replies into Instagram-sized chunks
 import time        # retry back-off for Graph API rate limits
+import threading   # the background Meta-outage probe
 from collections import deque      # a fixed-size list, used for de-duplication
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -641,8 +642,110 @@ def handle_message(sender_id: str, user_message: str) -> None:
 _recent_public_texts: deque = deque(maxlen=300)
 
 
+# When the last PUBLIC reply went out, on this process's monotonic clock.
+# A list so pace_public_reply() can update it without a global statement.
+_last_public_reply: List[Optional[float]] = [None]
+
+
+def public_reply_allowed() -> bool:
+    """A daily ceiling on PUBLIC comment replies.
+
+    A business account that answers a hundred comments an hour looks like a
+    bot to Instagram, and a locked account answers nobody at all. The private
+    reply and the DM are never capped - only the public surface is.
+    """
+    limit = config.COMMENT_DAILY_LIMIT
+    if limit <= 0:
+        return True
+    try:
+        posted = db.public_replies_since(24)
+    except Exception as error:
+        print(f"[COMMENT] could not read the public-reply count: {error!r}")
+        return True
+    if posted >= limit:
+        print(f"[COMMENT] daily public-reply limit reached ({posted}/{limit} in 24h) - "
+              "public reply skipped; the private reply still goes out.")
+        return False
+    return True
+
+
+def pace_public_reply() -> None:
+    """Leave a gap between public replies, so a burst of comments is not
+    answered in one machine-gun volley.
+
+    Timing comes from a monotonic clock inside this process, because the
+    stored timestamp is only accurate to the second and would let two replies
+    slip out almost together. The stored time is the fallback after a restart,
+    where a wait is not needed anyway.
+    """
+    gap = config.COMMENT_MIN_INTERVAL_SECONDS
+    if gap <= 0:
+        return
+    since: Optional[float] = None
+    if _last_public_reply[0] is not None:
+        since = time.monotonic() - _last_public_reply[0]
+    else:
+        try:
+            since = db.seconds_since_last_public_reply()
+        except Exception:
+            return
+    if since is not None and since < gap:
+        wait = gap - since
+        print(f"[COMMENT] pacing: waiting {wait:.0f}s before the next public reply.")
+        time.sleep(wait)
+    _last_public_reply[0] = time.monotonic()
+
+
+# ---------------------------------------------------------------------------
+# COMMENTS ARE ANSWERED IN THE ORDER THEY ARRIVED
+# ---------------------------------------------------------------------------
+# Each comment is handed a ticket the moment it is parsed, and its worker
+# waits for its turn. Two comments from one person on one Reel then reach the
+# brain in the order the customer wrote them, which is what makes "GFX pro
+# mats?" followed by "Alto" read as one conversation.
+# ---------------------------------------------------------------------------
+_comment_turn = threading.Condition()
+_comment_next = [0]        # ticket now being served
+_comment_issued = [0]      # tickets handed out so far
+
+
+def take_comment_ticket() -> int:
+    with _comment_turn:
+        ticket = _comment_issued[0]
+        _comment_issued[0] += 1
+        return ticket
+
+
+def _await_comment_turn(ticket: Optional[int]) -> bool:
+    """Wait for this ticket's turn. False when the wait timed out, in which
+    case the comment is answered anyway - late is better than never."""
+    if ticket is None:
+        return True
+    with _comment_turn:
+        waited = 0.0
+        while _comment_next[0] != ticket:
+            if waited >= COMMENT_TURN_TIMEOUT:
+                print(f"[COMMENT] waited {waited:.0f}s for its turn - answering out of order.")
+                return False
+            _comment_turn.wait(0.5)
+            waited += 0.5
+        return True
+
+
+def _finish_comment_turn(ticket: Optional[int]) -> None:
+    if ticket is None:
+        return
+    with _comment_turn:
+        if _comment_next[0] <= ticket:
+            _comment_next[0] = ticket + 1
+        _comment_turn.notify_all()
+
+
+COMMENT_TURN_TIMEOUT = float(os.getenv("COMMENT_TURN_TIMEOUT", "120"))
+
+
 def handle_comment(comment_id: str, commenter_id: str, media_id: str, text: str,
-                   parent_id: str = "") -> None:
+                   parent_id: str = "", ticket: Optional[int] = None) -> None:
     """Run one comment through the SAME brain and deliver the two replies.
 
     comments.handle_comment() calls brain.process() under a conversation id
@@ -650,6 +753,17 @@ def handle_comment(comment_id: str, commenter_id: str, media_id: str, text: str,
     by "Alto" is understood exactly like a DM - and never mixes with another
     Reel, another commenter, or this user's DMs.
     """
+    _await_comment_turn(ticket)
+    try:
+        _handle_comment_in_turn(comment_id, commenter_id, media_id, text, parent_id)
+    finally:
+        # Always release the turn, even after a failure, or every later
+        # comment would wait behind this one.
+        _finish_comment_turn(ticket)
+
+
+def _handle_comment_in_turn(comment_id: str, commenter_id: str, media_id: str,
+                            text: str, parent_id: str = "") -> None:
     print("\n" + "=" * 70)
     print(f"[COMMENT {commenter_id} on media {media_id}] {text}")
     print("-" * 70)
@@ -669,11 +783,16 @@ def handle_comment(comment_id: str, commenter_id: str, media_id: str, text: str,
     # ("Alto" under our answer) is answered in the same thread.
     target = parent_id or comment_id
     public_ok = private_ok = True
-    if result["public"]:
+    if result["public"] and public_reply_allowed():
+        pace_public_reply()
         new_id = send_comment_reply(target, result["public"])
         public_ok = new_id is not None
         _recent_public_texts.append(result["public"])
         if new_id:
+            try:
+                db.record_public_reply(result["public"])
+            except Exception as error:
+                print(f"[COMMENT] could not record the public reply: {error!r}")
             try:
                 db.event_already_seen("ours:" + new_id)   # its echo is ignored
             except Exception as error:
@@ -761,8 +880,13 @@ async def receive_webhook(request: Request, background_tasks: BackgroundTasks):
         except Exception as error:
             print(f"[WEBHOOK] could not record thread: {error!r}")
         print(f"[WEBHOOK] comment {cid} on {c['media_type'] or 'media'} {c['media_id']} queued.")
+        # The ticket is taken HERE, while the events are still in the order
+        # Meta delivered them. Without it two comments from the same person
+        # ("GFX pro mats?" then "Alto") can be picked up by the worker threads
+        # in either order, and the second one loses the first one's context.
         background_tasks.add_task(handle_comment, cid, c["commenter_id"],
-                                  c["media_id"], c["text"], c["parent_id"])
+                                  c["media_id"], c["text"], c["parent_id"],
+                                  take_comment_ticket())
     if not messages and not comment_events:
         print("[WEBHOOK] Received an event with no answerable text message.")
 
@@ -796,6 +920,74 @@ the deletion callback registered with Meta, and your conversation history is era
 <a href="mailto:foundersteam@cartrends.net">foundersteam@cartrends.net</a> from any account and we will delete it.</p>
 <h2>Contact</h2><p>Car Trends Car Mall, Opposite ISKCON Temple, Kharbas Cir Rd, Dholai, Jaipur 302020. Phone 6367857737.
 Email <a href="mailto:foundersteam@cartrends.net">foundersteam@cartrends.net</a>.</p></body></html>"""
+
+
+# ---------------------------------------------------------------------------
+# OUTAGE ALARM
+# ---------------------------------------------------------------------------
+# The bot can be perfectly healthy while Meta refuses every call - an account
+# security checkpoint does exactly that, and from outside nothing looks wrong.
+# A background probe asks Meta a harmless question every few minutes and this
+# endpoint turns the answer into an HTTP status, so a free uptime monitor can
+# email or message the owner within minutes instead of a customer noticing
+# days later.
+# ---------------------------------------------------------------------------
+_meta_state: Dict[str, Any] = {"ok": None, "detail": "not checked yet", "checked_at": ""}
+META_PROBE_SECONDS = int(os.getenv("META_PROBE_SECONDS", "300"))
+
+
+def probe_meta() -> Dict[str, Any]:
+    """Ask Meta who we are. Cheap, read-only, and blocked by exactly the
+    things that stop the bot replying."""
+    if not config.send_is_configured():
+        return {"ok": False, "detail": "no access token configured", "checked_at": db.now_iso()}
+    try:
+        r = requests.get(f"{config.GRAPH_API_BASE}/me", params={"fields": "id,username"},
+                         headers={"Authorization": f"Bearer {config.PAGE_ACCESS_TOKEN}"},
+                         timeout=GRAPH_TIMEOUT)
+        if r.status_code == 200:
+            return {"ok": True, "detail": "Meta is answering normally", "checked_at": db.now_iso()}
+        error = {}
+        try:
+            error = (r.json() or {}).get("error") or {}
+        except ValueError:
+            pass
+        detail = meta_block_note(error.get("code"), str(error.get("message") or "")) \
+            or f"Meta refused the check: HTTP {r.status_code} {str(error.get('message') or '')[:120]}"
+        return {"ok": False, "detail": detail, "checked_at": db.now_iso()}
+    except Exception as error:
+        return {"ok": False, "detail": f"could not reach Meta: {type(error).__name__}",
+                "checked_at": db.now_iso()}
+
+
+def _meta_probe_loop() -> None:
+    while True:
+        state = probe_meta()
+        was = _meta_state.get("ok")
+        _meta_state.update(state)
+        if state["ok"] is False and was is not False:
+            print(f"[ALARM] {state['detail']}", flush=True)
+        elif state["ok"] and was is False:
+            print("[ALARM] cleared - Meta is answering again.", flush=True)
+        time.sleep(max(60, META_PROBE_SECONDS))
+
+
+@app.get("/health/meta")
+def meta_health() -> JSONResponse:
+    """200 while Meta accepts our calls, 503 the moment it stops.
+
+    Point any uptime monitor at this address and it will tell you the bot has
+    gone deaf even though the server itself is up.
+    """
+    state = dict(_meta_state)
+    if state.get("ok") is None:                # first call before the probe ran
+        state = probe_meta()
+        _meta_state.update(state)
+    ok = bool(state.get("ok"))
+    return JSONResponse(status_code=200 if ok else 503,
+                        content={"meta_api": "ok" if ok else "blocked",
+                                 "detail": state.get("detail", ""),
+                                 "checked_at": state.get("checked_at", "")})
 
 
 @app.get("/privacy", response_class=HTMLResponse)
@@ -850,6 +1042,7 @@ def health_check():
 def on_startup() -> None:
     db.init_db()
     db.prune_processed_events(days=7)
+    db.prune_public_replies(days=7)
     print(f"[STARTUP] database ready at {config.DB_PATH}")
     print(f"[STARTUP] {len(kb.CONFIRMED_FAQS)} confirmed FAQs, "
           f"{len(kb.MISSING_INFO_FAQS)} awaiting business information")
@@ -857,6 +1050,11 @@ def on_startup() -> None:
         print("[STARTUP] DASHBOARD_PASSWORD is not set - "
               "the owner dashboard will refuse every request.")
     # Self-maintenance: token refresh, tunnel follow-up, webhook re-registration.
+    if os.getenv("CARTRENDS_ALARM", "1") == "1":
+        threading.Thread(target=_meta_probe_loop, name="cartrends-meta-probe",
+                         daemon=True).start()
+        print(f"[STARTUP] Meta outage alarm running; watch /health/meta "
+              f"(every {META_PROBE_SECONDS}s)")
     if os.getenv("CARTRENDS_MAINTENANCE", "1") == "1":
         try:
             import instagram_connect as _ic

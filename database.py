@@ -27,6 +27,7 @@
 =============================================================================
 """
 
+import hashlib
 import json
 import os
 import sqlite3
@@ -213,6 +214,18 @@ CREATE TABLE IF NOT EXISTS comment_threads (
     media_id     TEXT NOT NULL,
     created_at   TEXT NOT NULL
 );
+
+-- Every PUBLIC comment reply we posted, by hash of its text. Instagram reads
+-- the same sentence posted under comment after comment as spam and can lock
+-- the account, so a reply that was already used recently is rephrased before
+-- it is posted again, and a daily ceiling keeps the account human-paced.
+CREATE TABLE IF NOT EXISTS public_replies (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    text_hash TEXT NOT NULL,
+    posted_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_pubrep_hash ON public_replies(text_hash);
+CREATE INDEX IF NOT EXISTS ix_pubrep_time ON public_replies(posted_at);
 """
 
 
@@ -323,6 +336,60 @@ def thread_owner(comment_id: str) -> Optional[str]:
     row = get_connection().execute(
         "SELECT commenter_id FROM comment_threads WHERE comment_id = ?", (comment_id,)).fetchone()
     return row["commenter_id"] if row else None
+
+
+def _public_reply_hash(text: str) -> str:
+    """Compare the wording itself, ignoring case and spacing."""
+    return hashlib.sha256(" ".join((text or "").split()).lower().encode()).hexdigest()[:32]
+
+
+def public_reply_used_recently(text: str, hours: int = 24) -> bool:
+    """True when this exact public wording already went out within `hours`."""
+    if not text:
+        return False
+    cutoff = iso(utc_now() - timedelta(hours=hours))
+    row = get_connection().execute(
+        "SELECT 1 FROM public_replies WHERE text_hash = ? AND posted_at >= ? LIMIT 1",
+        (_public_reply_hash(text), cutoff)).fetchone()
+    return row is not None
+
+
+def record_public_reply(text: str) -> None:
+    """Remember a public reply we actually posted."""
+    if not text:
+        return
+    conn = get_connection()
+    with _write_lock:
+        conn.execute("INSERT INTO public_replies (text_hash, posted_at) VALUES (?, ?)",
+                     (_public_reply_hash(text), now_iso()))
+        conn.commit()
+
+
+def public_replies_since(hours: int = 24) -> int:
+    """How many public replies we posted in the last `hours`."""
+    cutoff = iso(utc_now() - timedelta(hours=hours))
+    row = get_connection().execute(
+        "SELECT COUNT(*) AS n FROM public_replies WHERE posted_at >= ?", (cutoff,)).fetchone()
+    return int(row["n"] if row else 0)
+
+
+def seconds_since_last_public_reply() -> Optional[float]:
+    """Age of the most recent public reply, or None when there is none."""
+    row = get_connection().execute(
+        "SELECT posted_at FROM public_replies ORDER BY id DESC LIMIT 1").fetchone()
+    if not row:
+        return None
+    return max(0.0, (utc_now() - parse_iso(row["posted_at"])).total_seconds())
+
+
+def prune_public_replies(days: int = 7) -> int:
+    """Drop old public-reply rows so the table cannot grow without bound."""
+    cutoff = iso(utc_now() - timedelta(days=days))
+    conn = get_connection()
+    with _write_lock:
+        cur = conn.execute("DELETE FROM public_replies WHERE posted_at < ?", (cutoff,))
+        conn.commit()
+    return cur.rowcount
 
 
 def prune_processed_events(days: int = 7) -> int:

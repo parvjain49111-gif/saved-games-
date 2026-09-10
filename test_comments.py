@@ -174,8 +174,12 @@ live_db = os.path.join(tempfile.gettempdir(), f"cartrends_comments_live_{_RUN}.d
 for _x in ("", "-wal", "-shm"):
     if os.path.exists(live_db + _x):
         os.remove(live_db + _x)
+# Pacing and the daily ceiling are proved separately (AS10/AS11, AS7-AS9);
+# this server is testing routing, so it answers without the human-paced gap.
 env = dict(os.environ, DB_PATH=live_db, PYTHONIOENCODING="utf-8", COMMENT_PRIVATE_REPLY="1",
-           PAGE_ACCESS_TOKEN="", APP_SECRET="")
+           PAGE_ACCESS_TOKEN="", APP_SECRET="",
+           COMMENT_MIN_INTERVAL_SECONDS="0", COMMENT_DAILY_LIMIT="0",
+           CARTRENDS_ALARM="0", CARTRENDS_MAINTENANCE="0")
 log_path = os.path.join(tempfile.gettempdir(), f"cartrends_comments_live_{_RUN}.log")
 log = open(log_path, "w", encoding="utf-8")
 proc = subprocess.Popen([sys.executable, "-m", "uvicorn", "bot:app", "--host", "127.0.0.1", "--port", str(port)],
@@ -339,6 +343,79 @@ check("12: the map link is in the private reply instead", "http" in r["private"]
 
 # Summary
 print("\n" + "=" * 72)
+
+# ---------------------------------------------------------------------------
+# ANTI-SPAM: Instagram locks accounts that post the same sentence repeatedly,
+# publish a phone number under comment after comment, or answer in a volley.
+# ---------------------------------------------------------------------------
+print("\n--- anti-spam behaviour ---")
+
+check("AS1: the public reply never carries the phone number",
+      all(kb.PHONE not in comments.public_reply(
+              brain.process(f"as1-{i}", q), q)
+          for i, q in enumerate(["number kya hai", "contact number please",
+                                 "aapka phone number", "how do I contact you"])))
+
+_a = brain.process("as2", "location")
+_p1 = comments.vary_public_reply(comments.public_reply(_a, "location"), "cid-1", False)
+db.record_public_reply(_p1)
+_p2 = comments.vary_public_reply(comments.public_reply(_a, "location"), "cid-2", False)
+check("AS2: the same answer is rephrased rather than repeated word for word",
+      _p1 != _p2, f"{_p1!r} vs {_p2!r}")
+check("AS3: the rephrasing keeps the meaning (only the greeting rotates)",
+      comments._strip_opener(_p1) == comments._strip_opener(_p2))
+check("AS4: the same comment id always produces the same wording (a retry never posts something new)",
+      comments.vary_public_reply(comments.public_reply(_a, "location"), "cid-9", False)
+      == comments.vary_public_reply(comments.public_reply(_a, "location"), "cid-9", False))
+
+check("AS5: a wording used within the window is remembered, an unused one is not",
+      db.public_reply_used_recently(_p1) and not db.public_reply_used_recently("never posted this"))
+
+_before = db.public_replies_since(24)
+db.record_public_reply("counted once")
+check("AS6: public replies are counted for the daily ceiling",
+      db.public_replies_since(24) == _before + 1)
+
+_saved_limit = config.COMMENT_DAILY_LIMIT
+config.COMMENT_DAILY_LIMIT = db.public_replies_since(24)
+check("AS7: at the daily ceiling the public reply is skipped (the private reply is not capped)",
+      bot.public_reply_allowed() is False)
+config.COMMENT_DAILY_LIMIT = 0
+check("AS8: a ceiling of 0 means no ceiling", bot.public_reply_allowed() is True)
+config.COMMENT_DAILY_LIMIT = _saved_limit + 10_000
+check("AS9: below the ceiling public replies are allowed", bot.public_reply_allowed() is True)
+config.COMMENT_DAILY_LIMIT = _saved_limit
+
+_saved_gap = config.COMMENT_MIN_INTERVAL_SECONDS
+config.COMMENT_MIN_INTERVAL_SECONDS = 0
+_t0 = time.time()
+bot.pace_public_reply()
+check("AS10: pacing of 0 seconds never sleeps", time.time() - _t0 < 0.5)
+config.COMMENT_MIN_INTERVAL_SECONDS = 1
+bot._last_public_reply[0] = None
+db.record_public_reply("pacing probe")
+bot.pace_public_reply()                          # first call marks the clock
+_t0 = time.time()
+bot.pace_public_reply()                          # second must wait the full gap
+_elapsed = time.time() - _t0
+check("AS11: two public replies cannot go out closer together than the gap",
+      0.9 <= _elapsed <= 3.0, f"{_elapsed:.2f}s between replies")
+config.COMMENT_MIN_INTERVAL_SECONDS = _saved_gap
+
+check("AS12: old public-reply rows are pruned",
+      isinstance(db.prune_public_replies(days=7), int))
+
+# The outage alarm turns "Meta refuses everything" into an HTTP status a
+# free uptime monitor can watch.
+bot._meta_state.update({"ok": False, "detail": "blocked", "checked_at": "now"})
+_r = bot.meta_health()
+check("AS13: /health/meta answers 503 while Meta is blocking the account",
+      _r.status_code == 503 and b'"blocked"' in _r.body)
+bot._meta_state.update({"ok": True, "detail": "fine", "checked_at": "now"})
+_r = bot.meta_health()
+check("AS14: /health/meta answers 200 when Meta is answering",
+      _r.status_code == 200 and b'"ok"' in _r.body)
+
 failed = [(n, d) for n, ok, d in RESULTS if not ok]
 print(f" comment checks: {len(RESULTS) - len(failed)}/{len(RESULTS)} passed")
 for n, d in failed:

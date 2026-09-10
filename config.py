@@ -135,6 +135,16 @@ MAX_DM_LENGTH: int = 900
 COMMENT_REPLIES_ENABLED: bool = os.getenv("COMMENT_REPLIES_ENABLED", "1") == "1"
 COMMENT_PRIVATE_REPLY: bool = os.getenv("COMMENT_PRIVATE_REPLY", "1") == "1"
 COMMENT_MAX_LENGTH: int = 300
+# Instagram locks accounts that behave like bots. Three limits keep the
+# public surface human: never repeat the same sentence within the window,
+# leave a gap between public replies, and stop after a daily ceiling.
+COMMENT_REPEAT_WINDOW_HOURS: int = int(os.getenv("COMMENT_REPEAT_WINDOW_HOURS", "24"))
+COMMENT_MIN_INTERVAL_SECONDS: int = int(os.getenv("COMMENT_MIN_INTERVAL_SECONDS", "20"))
+COMMENT_DAILY_LIMIT: int = int(os.getenv("COMMENT_DAILY_LIMIT", "40"))
+# The public reply never carries the phone number: the same number repeated
+# under comment after comment is the clearest automation signal there is.
+# The number still goes out in the private reply, where Meta expects it.
+COMMENT_PHONE_IN_PUBLIC: bool = os.getenv("COMMENT_PHONE_IN_PUBLIC", "0") == "1"
 # The Graph API base for comment replies - derived from GRAPH_API_URL so the
 # Facebook-Login / Instagram-Login host choice is made in ONE place. Works
 # for .../me/messages, .../<IG_ID>/messages and .../<PAGE_ID>/messages.

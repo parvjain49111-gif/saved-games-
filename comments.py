@@ -25,6 +25,7 @@ from typing import Any, Dict, Optional
 
 import brain
 import config
+import database as db
 import knowledge as kb
 from brain import Intent, Service, contains_any
 
@@ -175,8 +176,14 @@ def public_reply(a: "brain.Answer", comment_text: str) -> str:
     elif intent == Intent.HOURS or svc == Service.HOURS:
         text = f"Hi! {BUSINESS['hours_sentence']}"
     elif intent == Intent.CONTACT or svc == Service.CONTACT:
-        text = (f"Hi! {PHONE} par call ya WhatsApp kar lijiye 📞" if hin else
-                f"Hi! Call or WhatsApp us on {PHONE} 📞")
+        if config.COMMENT_PHONE_IN_PUBLIC:
+            text = (f"Hi! {PHONE} par call ya WhatsApp kar lijiye 📞" if hin else
+                    f"Hi! Call or WhatsApp us on {PHONE} 📞")
+        else:
+            # The number goes in the private reply instead - see _tidy().
+            text = ("Hi! DM karein, hum wahin call/WhatsApp number share kar denge 📞"
+                    if hin else
+                    "Hi! DM us and we'll share our call/WhatsApp number there 📞")
 
     # 4. The only two verified prices - stated only when the brain stated
     #    them AND the comment actually asked about that thing (no pivoting
@@ -254,9 +261,58 @@ def public_reply(a: "brain.Answer", comment_text: str) -> str:
     return _tidy(text)
 
 
+# Openers that mean the same thing. Rotating them stops a run of comments
+# from carrying byte-identical text, which is what Instagram's spam checks
+# look for. Meaning never changes - only the greeting.
+_OPENERS_EN = ("Hi! ", "Hello! ", "Hey! ", "")
+_OPENERS_HI = ("Hi! ", "Namaste! ", "Hello! ", "")
+_ALL_OPENERS = ("Hi! ", "Hello! ", "Hey! ", "Namaste! ")
+
+
+def _strip_opener(text: str) -> str:
+    for opener in _ALL_OPENERS:
+        if text.startswith(opener):
+            return text[len(opener):]
+    return text
+
+
+def vary_public_reply(text: str, comment_id: str = "", hin: bool = False) -> str:
+    """Return wording that was not already posted in the repeat window.
+
+    The greeting is rotated by comment id, so one comment always produces the
+    same reply (a retry never posts something new) while different comments
+    do not repeat each other. If every variant has been used recently the
+    text is returned unchanged - the caller decides whether to post it.
+    """
+    body = _strip_opener(" ".join((text or "").split()))
+    if not body:
+        return text
+    openers = _OPENERS_HI if hin else _OPENERS_EN
+    start = (sum(ord(c) for c in str(comment_id)) % len(openers)) if comment_id else 0
+    window = config.COMMENT_REPEAT_WINDOW_HOURS
+    first = ""
+    for step in range(len(openers)):
+        candidate = _cap_first(openers[(start + step) % len(openers)] + body)
+        if step == 0:
+            first = candidate
+        try:
+            if not db.public_reply_used_recently(candidate, window):
+                return candidate
+        except Exception:                      # a database hiccup must not block a reply
+            return candidate
+    return first
+
+
+def _cap_first(text: str) -> str:
+    return (text[0].upper() + text[1:]) if text and text[0].islower() else text
+
+
 def _tidy(text: str) -> str:
     """One line, capped, and the business number at most once."""
     text = " ".join(text.split())
+    if not config.COMMENT_PHONE_IN_PUBLIC and PHONE in text:
+        # Belt and braces: no branch may leak the number into a public reply.
+        text = text.replace(f" {PHONE}", "").replace(PHONE, "").replace("  ", " ").strip()
     if text.count(PHONE) > 1:
         first = text.index(PHONE) + len(PHONE)
         text = text[:first] + text[first:].replace(PHONE, "our number")
@@ -283,13 +339,14 @@ def handle_comment(comment_id: str, commenter_id: str, media_id: str,
         return {"answer": None, "public": "", "private": "", "conversation": key,
                 "comment_id": comment_id, "skipped": True}
     answer = brain.process(key, text, use_ai=use_ai)
+    hin = (answer.frame.language if answer.frame is not None else None) == "hi"
     private = answer.reply                 # the full DM-style answer (the brain
                                            # hands a "which car is this?" over itself)
     if answer.intent == Intent.LOCATION or answer.service == Service.LOCATION:
         private = brain.LOCATION_REPLY     # verified address WITH the map link
     return {
         "answer": answer,
-        "public": public_reply(answer, text),
+        "public": vary_public_reply(public_reply(answer, text), comment_id, hin),
         "private": private,
         "conversation": key,
         "comment_id": comment_id,
