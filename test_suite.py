@@ -1238,6 +1238,43 @@ def address_consistency_checks() -> List[Tuple[str, bool, str]]:
     return out
 
 
+def misspelling_checks() -> List[Tuple[str, bool, str]]:
+    """Real customer spellings that must reach the right product.
+
+    9-11 Sep 2026, live: "i20 model mate milega" was answered with the SPARE
+    PARTS reply and "floor mate milega" was escalated, because "mate" - how
+    "mat" is very often typed - matched nothing. The phrase table maps it
+    only where it can only mean the mat.
+    """
+    out: List[Tuple[str, bool, str]] = []
+
+    def note(name, ok, detail=""):
+        out.append((name, bool(ok), detail))
+
+    for q in ["Sir hyundai i20 active patrol 2019  model mate milega",
+              "Hyundai i20 active patrol model 1019  floor mate milega",
+              "car mate chahiye", "floor mates available", "gfx mate price",
+              "7d mate chahiye"]:
+        r = brain.answer(q, None, use_ai=False)
+        note(f"'mate' spelling reaches the mats answer: {q!r}",
+             r.product in ("floor_mats", "gfx", "gfx_pro", "gfx_normal"),
+             f"product={r.product} reply={r.reply[:70]}")
+        note(f"'mate' spelling never gets the spare-parts answer: {q!r}",
+             "spare parts" not in r.reply.lower(), r.reply[:70])
+
+    # In Gujarati "mate" means "for": "i20 mate seat cover" is about seat covers.
+    r = brain.answer("i20 mate seat cover chahiye", None, use_ai=False)
+    note("Gujarati 'mate' (for) is not rewritten into mats",
+         r.product == "seat_covers", f"product={r.product}")
+    note("a phrase never fires inside a longer word ('ultimate')",
+         brain.normalise("ultimate milega").split()[0] == "ultimate",
+         brain.normalise("ultimate milega"))
+    note("existing phrase corrections still apply ('jaisa banana' -> convert)",
+         "convert" in brain.normalise("fortuner ko legender jaisa banana hai"),
+         brain.normalise("fortuner ko legender jaisa banana hai"))
+    return out
+
+
 def main(use_ai: bool = False) -> int:
     print("=" * 78)
     print(f" CAR TRENDS CHATBOT - AUTOMATED TEST SUITE   ({len(CASES)} cases)")
@@ -1270,7 +1307,8 @@ def main(use_ai: bool = False) -> int:
                       ("DIALOGUE STATE (root cause)", dialogue_state_checks),
                       ("ROBUSTNESS (typos / entities / console memory)", robustness_checks),
                       ("ADVERSARIAL CLASSES (negation / duration / slot / prices / fuzzy)", adversarial_checks),
-                      ("STOCK CLAIMS", stock_claim_checks)]:
+                      ("STOCK CLAIMS", stock_claim_checks),
+                      ("REAL CUSTOMER SPELLINGS", misspelling_checks)]:
         print("\n--- " + title + " ---")
         section_failed = 0
         for name, ok, detail in fn():

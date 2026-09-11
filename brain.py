@@ -133,6 +133,16 @@ PHRASE_SYNONYMS: Dict[str, str] = {
     "convert karna": "convert", "convert karwana": "convert",
     "new model jaisa": "convert new model", "naye model jaisa": "convert new model",
     "look change": "convert look", "body kit": "body kit conversion",
+    # "mate" is how "mat" is very often typed ("i20 floor mate milega"). On
+    # its own it is NOT rewritten: in Gujarati "i20 mate" means "for i20".
+    # Only phrases where it can only mean the floor mat are mapped.
+    "floor mates": "floor mats", "floor mate": "floor mat",
+    "car mates": "car mats", "car mate": "car mat",
+    "gfx mates": "gfx mats", "gfx mate": "gfx mat",
+    "7d mates": "7d mats", "7d mate": "7d mat",
+    "mate milega": "mat milega", "mate milegi": "mat milegi",
+    "mate chahiye": "mat chahiye", "mate chaiye": "mat chahiye",
+    "mate available": "mat available", "mates available": "mats available",
 }
 
 _PUNCT = re.compile(r"[^\w\s]", re.UNICODE)
@@ -154,9 +164,10 @@ def normalise(text: str) -> str:
     text = _SPACES.sub(" ", text).strip()
     # Multi-word Hinglish idioms first: "jaisa banana" (make it look like)
     # is a body-conversion request, but no single word in it says so.
+    # Whole words only, so "mate milega" can never fire inside "ultimate milega".
     for phrase, canon in PHRASE_SYNONYMS.items():
         if phrase in text:
-            text = text.replace(phrase, canon)
+            text = re.sub(r"\b" + re.escape(phrase) + r"\b", canon, text)
     # Synonyms run before AND after the fuzzy step: a corrected spelling
     # ("scraches" -> "scratches") must still map to its canonical form.
     words = [SYNONYMS.get(f, f) for f in
