@@ -127,7 +127,8 @@ STOPWORDS = {
 # Multi-word idioms whose meaning no single word carries. Applied before the
 # word-level synonyms. Keep these canonical forms inside the vocabulary.
 PHRASE_SYNONYMS: Dict[str, str] = {
-    "xuv 700": "xuv700", "xuv 300": "xuv300",
+    "xuv 700": "xuv700", "xuv 300": "xuv300", "xuv 500": "xuv500",
+    "xuv 400": "xuv400",
     "jaisa banana": "convert", "jaise banana": "convert", "jaisa bana": "convert",
     "jaisa look": "convert look", "jaisa dikhna": "convert look",
     "convert karna": "convert", "convert karwana": "convert",
@@ -597,7 +598,13 @@ COMPARISON_WORDS = ["vs", "versus", "difference", "diff", "compare",
                     "better", "which one"]
 AVAILABILITY_WORDS = ["available", "stock", "in stock", "milega", "hai kya",
                       "do you have", "do you sell", "sell"]
-PICKUP_WORDS = ["pickup", "pick up", "drop", "doorstep", "home service"]
+# "drop" on its own is NOT a pickup request: "mileage drop ho gaya gaadi ka"
+# (the mileage fell) was read as pick-up/drop and handed to the team. Only
+# phrases where "drop" can only mean dropping the car off are listed.
+PICKUP_WORDS = ["pickup", "pick up", "doorstep", "home service",
+                "pick and drop", "pick drop", "drop off", "drop facility",
+                "drop service", "drop kar", "drop karoge", "drop karenge",
+                "drop kar doge", "drop kar dena", "ghar se le", "ghar tak chhod"]
 # "What should I get?" - a request for guidance, not a specific product.
 # Answering it with a random accessory FAQ ("back seat organizers for
 # laptops") is exactly the keyword-soup failure this release fixes.
@@ -685,6 +692,12 @@ _UNIT_WORDS = {"inch", "inches", "mm", "cm", "cc", "hp", "bhp", "w", "watt", "km
                "days", "din", "hours", "ghante", "months", "mahine", "years", "saal"}
 
 
+# A number that belongs to the car's NAME, not an amount. 15 Sep 2026, live:
+# "Alto 800" was answered "Happy to help with the price for your Alto".
+# (XUV 300/400/500/700 are joined into one word by PHRASE_SYNONYMS already.)
+_MODEL_NUMBER = re.compile(r"\b(alto|maruti)\s+800\b")
+
+
 def _year_like(num: str) -> bool:
     return len(num) == 4 and 1950 <= int(num) <= 2035
 
@@ -693,6 +706,7 @@ def mentions_price_figure(norm: str) -> bool:
     """Does the message quote an amount of money? "15000 me", "10k", "1 lakh",
     "rs 3000", "wiper 500 me", "mats 2000 me de do" - but not a year (creta
     2021 me li thi), a size (17 inch) or a count (2 dents)."""
+    norm = _MODEL_NUMBER.sub(r"\1", norm)        # "alto 800" is a car, not Rs 800
     if _FIGURE_SUFFIX.search(norm) or _RS_PREFIX.search(norm) or "₹" in norm:
         return True
     flat = norm.replace(",", "")
@@ -787,9 +801,8 @@ def detect_intent(norm: str, service: Optional[str]) -> str:
         return Intent.PICKUP_DROP
     if contains_any(norm, PRICE_WORDS):
         # "Any discount on accessories?" is an offers question whatever the
-        # service is - and FAQ 87 answers it (discounts come with the Gold
-        # Membership). Classifying it as a price question made it collide
-        # with the never-guess rule and escalate on an answer we do have.
+        # service is, and is handled by the offers rule (the team confirms
+        # current offers) rather than the price escalation.
         if contains_any(norm, ["discount", "offer"]):
             return Intent.OFFER_DISCOUNT
         return Intent.PRICE_INQUIRY
@@ -839,6 +852,8 @@ CAR_MODELS = [
     "camry", "corolla", "etios", "yaris", "verito", "lodgy", "captur",
     # "Gfx pro mats for nios 2019?" lost the car entirely (14 Sep 2026).
     "grand i10 nios", "i10 nios", "nios",
+    # A number that is part of the car's name - "Alto 800" was read as Rs 800.
+    "alto 800", "alto k10", "xuv500", "xuv400",
 ]
 
 # Make names, so "Skoda octavia" and a bare "Skoda" both register.
@@ -865,6 +880,9 @@ CAR_BRANDS = {
     "bmw": "BMW", "audi": "Audi", "mercedes": "Mercedes",
     "nios": "Hyundai", "i10 nios": "Hyundai", "grand i10 nios": "Hyundai",
     "grand i10": "Hyundai",
+    "alto 800": "Maruti", "alto k10": "Maruti",
+    "xuv500": "Mahindra", "xuv400": "Mahindra", "xuv700": "Mahindra",
+    "xuv300": "Mahindra",
 }
 
 _YEAR = re.compile(r"\b(19[89]\d|20[0-4]\d)\b")
@@ -903,7 +921,9 @@ _MODEL_DISPLAY = {"i10": "i10", "i20": "i20", "bmw": "BMW", "xuv700": "XUV700",
                   "xuv300": "XUV300", "wagonr": "WagonR", "kwid": "Kwid",
                   "mg hector": "MG Hector", "vw": "VW",
                   "nios": "Grand i10 Nios", "i10 nios": "Grand i10 Nios",
-                  "grand i10 nios": "Grand i10 Nios", "grand i10": "Grand i10"}
+                  "grand i10 nios": "Grand i10 Nios", "grand i10": "Grand i10",
+                  "alto 800": "Alto 800", "alto k10": "Alto K10",
+                  "xuv500": "XUV500", "xuv400": "XUV400"}
 
 
 def extract_car(norm: str) -> Tuple[Optional[str], Optional[str], Optional[str]]:
@@ -1115,15 +1135,14 @@ def service_intro(service: Optional[str]) -> str:
 
 def verified_price_faq(service: Optional[str],
                        asked_model: Optional[str]) -> Optional[Dict[str, Any]]:
-    """The approved answer that actually STATES a price - only two exist.
+    """The approved answer that actually STATES a price - only one exists.
 
-    Gold Membership is a fixed Rs 2,999. Used cars have a verified floor
-    (from Rs 99,000) that holds only while no particular model is asked
-    about. Every other price is unknown here and must escalate.
+    Used cars have a verified floor (from Rs 99,000) that holds only while no
+    particular model is asked about. Every other price is unknown here and
+    must escalate. (The Gold Membership price was removed when it was
+    discontinued on 15 Sep 2026.)
     """
-    if service == Service.MEMBERSHIP:
-        needle, want = "2,999", Intent.MEMBERSHIP_INQUIRY
-    elif service == Service.USED_CARS and not asked_model:
+    if service == Service.USED_CARS and not asked_model:
         needle, want = "99,000", Intent.USED_CAR_INQUIRY
     else:
         return None
@@ -1161,16 +1180,14 @@ def faq_is_eligible(faq: Dict[str, Any], intent: str,
        asked how long, so there was nothing to escalate.
     """
     if intent in NEVER_GUESS and faq["confirmed"] and faq["intent"] != intent:
-        # Two services DO have verified prices in their approved answers -
-        # the Gold Membership (Rs 2,999) and used cars (from Rs 99,000).
-        # A price question about them must be answered from those, not
-        # escalated as unknown.
+        # One service DOES have a verified price in its approved answers -
+        # used cars (from Rs 99,000). A price question about it must be
+        # answered from that, not escalated as unknown.
         # ...but the used-car figure is a FLOOR, so a price question that
         # names a specific model ("second hand creta ka price") still has
         # no verified answer and escalates.
         if intent == Intent.PRICE_INQUIRY and service == faq["service"] and (
-                faq["service"] == Service.MEMBERSHIP
-                or (faq["service"] == Service.USED_CARS and not asked_car)):
+                faq["service"] == Service.USED_CARS and not asked_car):
             return True
         return False
 
@@ -1387,7 +1404,8 @@ booth; alloy wheel painting and gold caliper painting; brand-new alloy
 wheels on advance order; full mechanical service including engine, brakes,
 AC, catalytic converter and O2 sensor cleaning; wheel alignment, balancing
 and puncture repair; suspension work; spare parts; car accessories and
-audio; used cars; and the Rs 2,999 Gold Membership.
+audio; and used cars. The Gold Membership is NO LONGER OFFERED - never
+offer it, describe its benefits or state its old price.
 
 === RULES ===
 1. NEVER state a price. You do not have the price list. Ask for the car
@@ -1437,8 +1455,9 @@ _AI_WEBSITE = re.compile(r"(?:our website|www\.|https?://|online store|order onl
 _AI_DISCOUNT = re.compile(r"\d+\s*%|percent off|flat \d+|special offer|combo offer", re.I)
 
 # The only figures any approved source states.
-_APPROVED_FIGURES = {"2999", "2,999", "9000", "9,000", "2300", "2,300",
-                     "99000", "99,000", "30", "40", "6367857737"}
+# (The Gold Membership figures 2,999 / 9,000 / 2,300 were removed on 15 Sep
+# 2026 when the membership was discontinued - a reply stating them is unsafe.)
+_APPROVED_FIGURES = {"99000", "99,000", "30", "40", "6367857737"}
 
 
 # The model once answered "Same for mine?" by reciting its own instructions.
@@ -2235,7 +2254,24 @@ def answer(message: str, conversation_id: Optional[str] = None,
         base.reply = _finish_sales_reply(base, norm)
         return base
 
-    # ---- Verified prices: the two the approved answers actually state ----
+    # ---- Gold Membership: discontinued -----------------------------------
+    # Owner, 15 Sep 2026: "we are not selling it now". Any membership question
+    # - what it is, its price, the free wash or extinguisher, its validity -
+    # gets the plain truth, never the old Rs 2,999 offer.
+    if service == Service.MEMBERSHIP:
+        hin = _hinglish(norm)
+        base.reply = (
+            f"{kb.MEMBERSHIP_DISCONTINUED_HI} Current services aur offers ke liye "
+            f"{PHONE} par call ya WhatsApp karein."
+            if hin else
+            f"{kb.MEMBERSHIP_DISCONTINUED} For current services and offers, call "
+            f"or WhatsApp us on {PHONE}.")
+        base.source = "RULE"
+        base.confidence, base.covered = 0.95, True
+        base.resolution = Resolution.ANSWERED
+        return base
+
+    # ---- Verified prices: the one the approved answers actually state ----
     # "kitne ki h" after the membership answer, or "kitne se start hai" for
     # used cars, come from the approved text - never from the escalation
     # template, which would hide a fact the customer is allowed to hear.
@@ -2525,24 +2561,23 @@ def answer(message: str, conversation_id: Optional[str] = None,
         base.preferred_day = extract_preferred_day(norm)
         return base
 
-    # ---- Offers and discounts: only the verified one ----------------------
+    # ---- Offers and discounts: the team confirms --------------------------
     # The model once answered "We don't offer any discounts" - an invented
-    # NEGATIVE, contradicting the Gold Membership discount in FAQ 87.
+    # NEGATIVE. The only discount ever verified came with the Gold Membership,
+    # which was discontinued on 15 Sep 2026, so no offer can be stated here:
+    # neither a yes nor a no. The team confirms what is running.
     if intent == Intent.OFFER_DISCOUNT:
         hin = _hinglish(norm)
         base.reply = (
-            ("Jo discount hum confirm kar sakte hain wo Gold Membership "
-             "(Rs 2,999) ke saath hai - accessories/painting par special "
-             "discounts aur free services. Koi aur current offer hai ya "
-             f"nahi, team {PHONE} par confirm kar degi.")
+            f"Current offers aur discounts hamari team confirm karegi - {PHONE} "
+            "par call ya WhatsApp karein."
             if hin else
-            ("The discount we can confirm is through the Gold Membership "
-             "(Rs 2,999) - special discounts on accessories and painting, "
-             "plus free services. Whether any other offer is running right "
-             f"now, our team will confirm on {PHONE}."))
-        base.source = "RULE"
-        base.confidence, base.covered = 0.85, True
-        base.resolution = Resolution.ANSWERED
+            f"Current offers and discounts are confirmed by our team - call or "
+            f"WhatsApp us on {PHONE}.")
+        base.source, base.escalated = "ESCALATION", True
+        base.confidence, base.covered = 0.8, False
+        base.resolution = Resolution.ESCALATED
+        base.gap_topic = gap_topic(service or Service.GENERAL, intent)
         return base
 
 
@@ -3536,8 +3571,8 @@ def avoid_repeat(a: "Answer", recent: List[str]) -> str:
     seen = {r.strip() for r in recent if r}
     if a.reply.strip() not in seen:
         return a.reply
-    # A real answer may be given again: a customer who asks the Gold
-    # Membership price twice should hear Rs 2,999 twice, not a handover. Only
+    # A real answer may be given again: a customer who asks the used-car
+    # starting price twice should hear Rs 99,000 twice, not a handover. Only
     # a reply that answered nothing concrete - a menu, a clarifying question,
     # the generic "please call us" - is the robotic repeat this guards against.
     if a.service or a.product:

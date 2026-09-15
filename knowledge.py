@@ -225,6 +225,13 @@ def manager_answer(service: str, intent: str) -> Optional[str]:
 # ===========================================================================
 
 
+# Owner, 15 Sep 2026: "for this gold membership we are not selling it now so
+# remove it". Every membership question gets this plain fact - never the old
+# Rs 2,999 offer or its benefits. The CTA is added by the brain.
+MEMBERSHIP_DISCONTINUED = "We're not offering the Gold Membership at the moment."
+MEMBERSHIP_DISCONTINUED_HI = "Gold Membership abhi available nahi hai."
+
+
 def _faq(fid, question, answer, category, source, service, intent,
          confirmed=True, note=None):
     """Build one FAQ record and derive the escalation flag from confidence."""
@@ -368,9 +375,8 @@ APPROVED_FAQS: List[Dict[str, Any]] = [
          "PPF/Ceramic", "Intent: PPF/Ceramic",
          Service.CERAMIC, Intent.SERVICE_INQUIRY),
     _faq(27, "car wash details",
-         "We offer premium car wash and detailing services. (Fun fact: Gold "
-         "Members get 6 free car washes!).",
-         "PPF/Ceramic", "Core Services / Membership",
+         "We offer premium car wash and detailing services.",
+         "PPF/Ceramic", "Core Services",
          Service.CAR_WASH, Intent.SERVICE_INQUIRY),
     _faq(28, "bmw me ppf karana hai",
          "Yes, we specialize in premium cars like BMWs. We offer full PPF "
@@ -505,8 +511,7 @@ APPROVED_FAQS: List[Dict[str, Any]] = [
          "Service/Mechanical", "Core Services: Mechanical & General Service",
          Service.MECHANICAL, Intent.SERVICE_INQUIRY),
     _faq(55, "car battery change karni h",
-         "Yes, we do battery replacements. (Note: Battery replacement "
-         "service is also included for our Gold Members!).",
+         "Yes, we do battery replacements.",
          "Service/Mechanical", "Core Services: Mechanical & General Service",
          Service.MECHANICAL, Intent.SERVICE_INQUIRY),
     _faq(56, "service me kya kya include hai",
@@ -515,11 +520,10 @@ APPROVED_FAQS: List[Dict[str, Any]] = [
          "cleaning.",
          "Service/Mechanical", "Intent: Service/Mechanical",
          Service.MECHANICAL, Intent.SERVICE_INQUIRY),
-    _faq(57, "gaadi pickup aur drop available h?",
-         "Free pick-up and drop is a special benefit included with our Gold "
-         "Membership (Rs 2,999)!",
-         "Membership", "Core Services: Membership Offer",
-         Service.MEMBERSHIP, Intent.PICKUP_DROP),
+    _faq(57, "gaadi pickup aur drop available h?", None,
+         "Pickup/Drop", "Missing Information",
+         Service.GENERAL, Intent.PICKUP_DROP, confirmed=False,
+         note="Our team will confirm pick-up and drop for you."),
     _faq(58, "catalytic converter clean price", None,
          "Service/Mechanical", "Missing Information",
          Service.MECHANICAL, Intent.PRICE_INQUIRY, confirmed=False),
@@ -654,11 +658,10 @@ APPROVED_FAQS: List[Dict[str, Any]] = [
          "in stock!",
          "Accessories/Products", "Products & Accessories: Mats",
          Service.ACCESSORIES, Intent.AVAILABILITY_REQUEST),
-    _faq(87, "discount on accessories?",
-         "With our Gold Membership (Rs 2,999) you get special discounts on "
-         "accessories, plus lots of free services!",
-         "Membership / Accessories", "Core Services: Membership",
-         Service.MEMBERSHIP, Intent.OFFER_DISCOUNT),
+    _faq(87, "discount on accessories?", None,
+         "Accessories", "Missing Information",
+         Service.ACCESSORIES, Intent.OFFER_DISCOUNT, confirmed=False,
+         note="Our team will confirm the current offers on accessories for you."),
 
     # ---------------- CATEGORY 8: USED CARS ----------------
     _faq(88, "second hand car chahiye",
@@ -698,33 +701,19 @@ APPROVED_FAQS: List[Dict[str, Any]] = [
          "Used Cars", "Core Services: Used Car Sales",
          Service.USED_CARS, Intent.USED_CAR_INQUIRY),
 
-    # ---------------- CATEGORY 9: GOLD MEMBERSHIP ----------------
-    _faq(95, "gold membership kya hai",
-         "Our Gold Membership is Rs 2,999. It includes a free fire "
-         "extinguisher, 2 free labour-free services, 6 free car washes, "
-         "discounts on accessories/painting, free pickup/drop, AC check, and "
-         "more! Benefits total over Rs 9,000!",
-         "Membership", "Intent: Membership",
-         Service.MEMBERSHIP, Intent.MEMBERSHIP_INQUIRY),
-    _faq(96, "2999 offer details",
-         "For 2999/-, you get Gold Membership: Free fire extinguisher, 2 "
-         "free services, 6 washes, free pickup/drop, AC check, wheel "
-         "alignment, battery replacement check, and discounts!",
-         "Membership", "Intent: Membership",
-         Service.MEMBERSHIP, Intent.MEMBERSHIP_INQUIRY),
-    _faq(97, "is washing free in membership?",
-         "Yes! Gold Members receive 6 free car washes as part of their "
-         "package.",
-         "Membership", "Core Services: Membership Offer",
-         Service.MEMBERSHIP, Intent.MEMBERSHIP_INQUIRY),
-    _faq(98, "free fire extinguisher milega?",
-         "Yes, a free auto fire extinguisher worth Rs 2,300 is included when "
-         "you buy the Gold Membership for Rs 2,999!",
-         "Membership", "Core Services: Membership Offer",
-         Service.MEMBERSHIP, Intent.MEMBERSHIP_INQUIRY),
-    _faq(99, "membership valid for how long?", None,
-         "Membership", "Missing Information",
-         Service.MEMBERSHIP, Intent.MEMBERSHIP_INQUIRY, confirmed=False),
+    # ---------------- CATEGORY 9: GOLD MEMBERSHIP (DISCONTINUED) ----------
+    # Discontinued 15 Sep 2026. The questions stay so they are recognised;
+    # the answer is the plain fact, never the old price or benefits.
+    _faq(95, "gold membership kya hai", MEMBERSHIP_DISCONTINUED,
+         "Membership", "Discontinued", Service.MEMBERSHIP, Intent.MEMBERSHIP_INQUIRY),
+    _faq(96, "2999 offer details", MEMBERSHIP_DISCONTINUED,
+         "Membership", "Discontinued", Service.MEMBERSHIP, Intent.MEMBERSHIP_INQUIRY),
+    _faq(97, "is washing free in membership?", MEMBERSHIP_DISCONTINUED,
+         "Membership", "Discontinued", Service.MEMBERSHIP, Intent.MEMBERSHIP_INQUIRY),
+    _faq(98, "free fire extinguisher milega?", MEMBERSHIP_DISCONTINUED,
+         "Membership", "Discontinued", Service.MEMBERSHIP, Intent.MEMBERSHIP_INQUIRY),
+    _faq(99, "membership valid for how long?", MEMBERSHIP_DISCONTINUED,
+         "Membership", "Discontinued", Service.MEMBERSHIP, Intent.MEMBERSHIP_INQUIRY),
 ]
 
 # Sanity guards - these run at import so a bad edit is caught immediately

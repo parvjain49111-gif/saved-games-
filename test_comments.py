@@ -64,7 +64,7 @@ def public_is_safe(name, pub, allow_digits=("6367857737", "302020")):
     check(f"{name}: short public reply", 0 < len(pub) <= config.COMMENT_MAX_LENGTH, str(len(pub)))
     check(f"{name}: no car model named publicly", not any(c in low for c in CARS), pub)
     check(f"{name}: no internal state words leak", not any(w in low for w in ("state", "intent", "slot_", "pending", "conversation_id", "message_type")), pub)
-    check(f"{name}: no invented figure", digits == "" or "2,999" in pub or "99,000" in pub, pub)
+    check(f"{name}: no invented figure", digits == "" or "99,000" in pub, pub)
     check(f"{name}: phone at most once", pub.count(kb.PHONE) <= 1, pub)
     check(f"{name}: no confirmation of a booking", "confirmed" not in low and "booked" not in low and "done for you" not in low, pub)
     check(f"{name}: no upselling", sum(w in low for w in ("ceramic", "armrest", "seat cover", "wiper", "membership")) <= (1 if any(w in low for w in ("ceramic", "membership")) else 0) or True)
@@ -100,7 +100,8 @@ check("3: no price stated publicly", not any(ch.isdigit() for ch in r["public"].
 check("3: public reply hands the price to the DM/team", "dm" in r["public"].lower() and ("price" in r["public"].lower() or "team" in r["public"].lower()), r["public"])
 public_is_safe("3", r["public"])
 r = comment("reel9", "u9", "gold membership price?")
-check("3b: a VERIFIED price is stated publicly", "2,999" in r["public"], r["public"])
+check("3b: the discontinued membership is never quoted publicly",
+      "2,999" not in r["public"] and "not offering" in r["public"].lower(), r["public"])
 r = comment("reel9", "u8", "used car kitne se start?")
 check("3c: the verified used-car floor is stated publicly", "99,000" in r["public"], r["public"])
 r = comment("reel9", "u7", "second hand creta ka price?")

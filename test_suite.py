@@ -41,7 +41,7 @@ from knowledge import Intent, Service
 # ---------------------------------------------------------------------------
 # The ONLY money figures any approved answer contains.
 ALLOWED_MONEY = {
-    "2999", "2,999", "9000", "9,000", "2300", "2,300",   # membership
+    # (Gold Membership 2,999 / 9,000 / 2,300 removed 15 Sep 2026 - discontinued)
     "99000", "99,000", "99", "30k", "40k", "30", "40",   # used cars
     "6367857737",                                        # the phone number
     "7", "10", "8", "3", "6", "2", "0w20", "0w16", "5w30", "3008", "110",
@@ -270,14 +270,16 @@ add(["used jeep compass price", "second hand creta ka price"],
     Service.USED_CARS, Intent.PRICE_INQUIRY, "escalate")
 
 # ---- MEMBERSHIP ----------------------------------------------------------
+# Gold Membership is discontinued (owner, 15 Sep 2026): every membership
+# question is answered with that plain fact, never the old offer.
 add(["gold membership kya hai", "2999 offer details",
      "is washing free in membership?", "free fire extinguisher milega?",
-     "discount on accessories?", "membership ke fayde kya hai",
-     "gaadi pickup aur drop available h?"],
-    None, None, "answer")
-add(["membership valid for how long?", "membership kitne months valid hai?",
-     "membership validity kya hai"],
-    Service.MEMBERSHIP, None, "escalate")
+     "membership ke fayde kya hai", "membership valid for how long?",
+     "membership kitne months valid hai?", "membership validity kya hai"],
+    Service.MEMBERSHIP, None, "answer")
+# These two only had an answer because of the membership - now the team confirms.
+add(["discount on accessories?", "gaadi pickup aur drop available h?"],
+    None, None, "escalate")
 
 # ---- WEBSITE / GENERAL ---------------------------------------------------
 add(["do you guys have a website", "website link bhejo", "online order kar sakte hai"],
@@ -990,10 +992,15 @@ def adversarial_checks():
         note(f"slot-proposal: {msg!r} -> {want}", got == want, got)
 
     # ---- verified prices
-    for msg, figure in [("gold membership kya hai aur kitne ki hai?", "2,999"), ("Membership ka price kya hai?", "2,999"),
-                        ("bhai purani car chahiye, budget kam hai, kitne se start hai?", "99,000")]:
+    for msg, figure in [("bhai purani car chahiye, budget kam hai, kitne se start hai?", "99,000")]:
         a = brain.answer(msg, None, use_ai=False)
         note(f"verified price answered: {msg!r}", figure in a.reply and not a.escalated, a.reply[:80])
+    for msg in ["gold membership kya hai aur kitne ki hai?", "Membership ka price kya hai?"]:
+        a = brain.answer(msg, None, use_ai=False)
+        note(f"discontinued membership never quotes Rs 2,999: {msg!r}",
+             "2,999" not in a.reply and "2999" not in a.reply
+             and ("not offering" in a.reply.lower() or "available nahi" in a.reply.lower()),
+             a.reply[:80])
     a = brain.answer("ppf kitne ka hai", None, use_ai=False)
     note("unverified price still not invented", not any(ch.isdigit() for ch in a.reply.replace("6367857737", "")), a.reply[:80])
 
@@ -1055,8 +1062,8 @@ def adversarial_checks():
              r[1].message_type == MT.CONTINUATION and "note kar liya" in r[1].reply and "bonnet" not in r[1].reply
              and "confirm ho gaya" not in r[1].reply and r[1].car_model == "Thar", r[1].reply[:90])
         r = run("memb", ["gold membrship kya hota h", "kitne ki h"])
-        note("e2e verified price: 'kitne ki h' restates Rs 2,999 instead of escalating",
-             "2,999" in r[1].reply and not r[1].escalated, r[1].reply[:60])
+        note("e2e discontinued membership: a follow-up 'kitne ki h' never quotes Rs 2,999",
+             "2,999" not in r[0].reply and "2,999" not in r[1].reply, r[1].reply[:60])
         # ---- classes from the second harness pass
         r = run("opn", ["seltos pe ceramic karwani hai", "sunday ko opn ho?"])
         note("e2e short typo: 'sunday ko opn ho?' is an hours aside, not a slot proposal",
@@ -1387,9 +1394,9 @@ def live_quality_checks_2() -> List[Tuple[str, bool, str]]:
         note("2: a third car-only message does not bounce back to an earlier reply",
              r[2].reply not in (r[0].reply, r[1].reply), r[2].reply[:90])
 
-        r = run("rq_same_q", ["gold membership kitne ki hai?", "gold membership kitne ki hai?"])
+        r = run("rq_same_q", ["purani car kitne se start hai?", "purani car kitne se start hai?"])
         note("2: a real answer asked for twice is given again, not swapped for a handover",
-             "2,999" in r[1].reply and not r[1].reply.startswith("I've shared what I can"),
+             "99,000" in r[1].reply and not r[1].reply.startswith("I've shared what I can"),
              r[1].reply[:90])
 
         r = run("rq_generic", ["Honda city 2017", "Honda city 2017"])
@@ -1430,6 +1437,85 @@ def live_quality_checks_2() -> List[Tuple[str, bool, str]]:
     return out
 
 
+def membership_and_model_number_checks() -> List[Tuple[str, bool, str]]:
+    """Owner, 15 Sep 2026: Gold Membership removed; "Alto 800" is a car."""
+    out: List[Tuple[str, bool, str]] = []
+
+    def note(name, ok, detail=""):
+        out.append((name, bool(ok), detail))
+
+    # --- Gold Membership is discontinued everywhere -----------------------
+    for q in ["gold membership kya hai", "Gold membership price?", "2999 offer details",
+              "membership ke fayde kya hai", "is washing free in membership?",
+              "free fire extinguisher milega?", "membership valid for how long?"]:
+        r = brain.answer(q, None, use_ai=False)
+        low = r.reply.lower()
+        note(f"membership: no old price or benefits: {q!r}",
+             "2,999" not in r.reply and "2999" not in r.reply and "9,000" not in r.reply
+             and "free car wash" not in low and "extinguisher" not in low, r.reply[:90])
+        note(f"membership: says it is not offered: {q!r}",
+             "not offering" in low or "available nahi" in low, r.reply[:90])
+        note(f"membership: gives the number once: {q!r}", r.reply.count(kb.PHONE) == 1, r.reply[:90])
+
+    for q in ["discount on accessories?", "koi offer hai kya?", "gaadi pickup aur drop available h?"]:
+        r = brain.answer(q, None, use_ai=False)
+        note(f"no membership pitch in: {q!r}",
+             "membership" not in r.reply.lower() and "2,999" not in r.reply, r.reply[:90])
+    for q in ["discount on accessories?", "gaadi pickup aur drop available h?"]:
+        r = brain.answer(q, None, use_ai=False)
+        note(f"handed to the team: {q!r}", r.escalated and kb.PHONE in r.reply, r.reply[:90])
+
+    for q in ["car wash karte ho?", "car battery change karni h"]:
+        r = brain.answer(q, None, use_ai=False)
+        note(f"no 'Gold Members' aside in: {q!r}", "gold member" not in r.reply.lower(), r.reply[:90])
+
+    note("the AI instructions no longer offer the membership",
+         "2,999" not in brain.SYSTEM_PROMPT and "no longer offered" in brain.SYSTEM_PROMPT.lower())
+    note("Rs 2,999 is no longer an approved figure", "2999" not in brain._APPROVED_FIGURES
+         and "2,999" not in brain._APPROVED_FIGURES, str(brain._APPROVED_FIGURES))
+    # "gold members" as a whole word - "Gold Membership" in the discontinued
+    # wording itself must not count (the first version of this check did).
+    _old_offer = [f["id"] for f in kb.APPROVED_FAQS
+                  if "2,999" in (f["answer"] or "") or "2,999" in (f["note"] or "")
+                  or re.search(r"gold members", (f["answer"] or "").lower())]
+    note("no approved FAQ answer still states the old offer", not _old_offer, str(_old_offer))
+
+    # --- "Alto 800" is a car, not Rs 800 ------------------------------------
+    for q in ["Alto 800", "XUV 500", "maruti 800 ke liye seat cover"]:
+        p = brain.perceive(q)
+        note(f"model number is not a price: {q!r}", p.intent != Intent.PRICE_INQUIRY,
+             f"intent={p.intent}")
+    r = brain.answer("alto 800 ke liye seat cover chahiye", None, use_ai=False)
+    note("'alto 800 ke liye seat cover' is a seat-cover question, not a price",
+         r.product == "seat_covers" and r.intent != Intent.PRICE_INQUIRY,
+         f"product={r.product} intent={r.intent}")
+    note("'Alto 800' is recognised with its number",
+         (brain.perceive("Alto 800").model or "").lower() == "alto 800",
+         str(brain.perceive("Alto 800").model))
+    for q in ["wiper 500 me", "ceramic 15000 me?", "mats 800 me milenge?", "ppf 25k me hoga?"]:
+        note(f"a real amount is still a price: {q!r}",
+             brain.mentions_price_figure(brain.normalise(q)), brain.normalise(q))
+
+    import os, tempfile
+    import config as _cfg, database as _db
+    old_path = _cfg.DB_PATH
+    tmp = os.path.join(tempfile.gettempdir(), "cartrends_membership_alto.db")
+    for x in ("", "-wal", "-shm"):
+        if os.path.exists(tmp + x):
+            os.remove(tmp + x)
+    _db.close_connection()
+    _cfg.DB_PATH = tmp
+    try:
+        _db.init_db()
+        r = [brain.process("ma_alto", m, use_ai=False) for m in ["Alto", "Alto 800"]]
+        note("'Alto' then 'Alto 800' never asks about a price",
+             "price" not in r[1].reply.lower(), r[1].reply[:90])
+    finally:
+        _db.close_connection()
+        _cfg.DB_PATH = old_path
+    return out
+
+
 def main(use_ai: bool = False) -> int:
     print("=" * 78)
     print(f" CAR TRENDS CHATBOT - AUTOMATED TEST SUITE   ({len(CASES)} cases)")
@@ -1465,7 +1551,8 @@ def main(use_ai: bool = False) -> int:
                       ("STOCK CLAIMS", stock_claim_checks),
                       ("REAL CUSTOMER SPELLINGS", misspelling_checks),
                       ("LIVE REPLY QUALITY (14-15 Sep)", live_quality_checks),
-                      ("LIVE REPLY QUALITY 2 (repeat / floor met / Pro)", live_quality_checks_2)]:
+                      ("LIVE REPLY QUALITY 2 (repeat / floor met / Pro)", live_quality_checks_2),
+                      ("GOLD MEMBERSHIP REMOVED / ALTO 800", membership_and_model_number_checks)]:
         print("\n--- " + title + " ---")
         section_failed = 0
         for name, ok, detail in fn():

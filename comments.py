@@ -185,19 +185,19 @@ def public_reply(a: "brain.Answer", comment_text: str) -> str:
                     if hin else
                     "Hi! DM us and we'll share our call/WhatsApp number there 📞")
 
-    # 4. The only two verified prices - stated only when the brain stated
+    # 4. The one verified price (used cars) - stated only when the brain stated
     #    them AND the comment actually asked about that thing (no pivoting
     #    a free-extinguisher or EMI question into a price pitch).
     elif finance:
         text = ("Hi! Finance/EMI options ke liye DM karein - team wahin details confirm karegi."
                 if hin else
                 "Hi! Please DM us for the finance/EMI options - our team will confirm the details there.")
-    elif (svc == Service.MEMBERSHIP and "2,999" in a.reply and not a.escalated
-          and contains_any(norm, _MEMBERSHIP_WORDS)
-          and intent in (Intent.PRICE_INQUIRY, Intent.MEMBERSHIP_INQUIRY)):
-        text = ("Hi! Gold Membership Rs 2,999 ki hai - full benefits ke liye DM karein."
+    elif svc == Service.MEMBERSHIP:
+        # Discontinued (owner, 15 Sep 2026): say so plainly in public, never
+        # the old Rs 2,999 offer.
+        text = ("Hi! Gold Membership abhi available nahi hai - current offers ke liye DM karein."
                 if hin else
-                "Hi! Gold Membership is Rs 2,999 - DM us for the full benefits.")
+                "Hi! We're not offering the Gold Membership right now - DM us for current offers.")
     elif (svc == Service.USED_CARS and "99,000" in a.reply and not a.escalated
           and contains_any(norm, _USED_WORDS)
           and intent in (Intent.PRICE_INQUIRY, Intent.USED_CAR_INQUIRY)):

@@ -909,7 +909,7 @@ account by direct message and replies to comments on its posts and reels.</p>
 <h2>What we receive</h2><p>When you message or comment, Meta sends the Assistant your Instagram-scoped user ID, your username
 where Meta provides it, and the text of your message or comment. The Assistant does not receive your password, email address,
 phone number or contacts, and it does not read your other conversations.</p>
-<h2>How we use it</h2><p>The text is used only to prepare a reply about Car Trends Car Mall (showroom address and hours, membership,
+<h2>How we use it</h2><p>The text is used only to prepare a reply about Car Trends Car Mall (showroom address and hours,
 used-car enquiries and test-drive requests). Enquiries that need a human, such as a test-drive booking, are passed to the
 Car Trends Car Mall team so they can contact you.</p>
 <h2>Storage and sharing</h2><p>Conversations are stored on Car Trends Car Mall's own systems so the Assistant can remember the
