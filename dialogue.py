@@ -174,6 +174,11 @@ def classify(p: Perception, state: Dict[str, Any]) -> str:
             return MessageType.NEW_TOPIC        # "I have a Creta." - car only
         if p.intent == "BOOKING_REQUEST":
             return MessageType.NEW_TOPIC        # generic booking info is safe
+        # "pick and drop milega?" / "pickup drop?" name no service, but they
+        # ARE the whole request - asking "which service or product?" back
+        # (15 Sep 2026) answered nothing. Like a booking, it stands alone.
+        if p.intent == "PICKUP_DROP":
+            return MessageType.NEW_TOPIC
         # Ambiguity is a property of SHORT messages - "price?", "yes", "for
         # my car". A full sentence that names nothing we recognise is still
         # a real question and must reach the FAQ matcher / model, which

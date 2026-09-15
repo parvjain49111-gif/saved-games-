@@ -1480,6 +1480,19 @@ def membership_and_model_number_checks() -> List[Tuple[str, bool, str]]:
                   or re.search(r"gold members", (f["answer"] or "").lower())]
     note("no approved FAQ answer still states the old offer", not _old_offer, str(_old_offer))
 
+    # --- short pick-up/drop requests reach the team (15 Sep 2026) ---------
+    for q in ["pick and drop milega?", "pickup drop?", "pickup milega kya",
+              "gaadi pickup aur drop available h?", "gaadi drop kar doge?"]:
+        r = brain.answer(q, None, use_ai=False)
+        note(f"pick-up/drop request goes to the team, not the menu: {q!r}",
+             r.escalated and "pick-up and drop" in r.reply.lower()
+             and "what you need" not in r.reply.lower()
+             and r.reply.count(kb.PHONE) == 1, r.reply[:90])
+    for q in ["mileage drop ho gaya gaadi ka", "ac cooling drop ho gayi"]:
+        r = brain.answer(q, None, use_ai=False)
+        note(f"a 'drop' that is not pick-up is not treated as pick-up: {q!r}",
+             r.intent != Intent.PICKUP_DROP and "pick-up" not in r.reply.lower(), r.reply[:90])
+
     # --- "Alto 800" is a car, not Rs 800 ------------------------------------
     for q in ["Alto 800", "XUV 500", "maruti 800 ke liye seat cover"]:
         p = brain.perceive(q)
