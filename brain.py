@@ -143,6 +143,12 @@ PHRASE_SYNONYMS: Dict[str, str] = {
     "mate milega": "mat milega", "mate milegi": "mat milegi",
     "mate chahiye": "mat chahiye", "mate chaiye": "mat chahiye",
     "mate available": "mat available", "mates available": "mats available",
+    # "Floor met" (15 Sep 2026, live, a Punch owner). Only where "met" can only
+    # mean the mat: "my car met with an accident" must stay untouched, so
+    # "car met" is deliberately NOT listed.
+    "floor mets": "floor mats", "floor met": "floor mat",
+    "gfx mets": "gfx mats", "gfx met": "gfx mat",
+    "7d mets": "7d mats", "7d met": "7d mat",
 }
 
 _PUNCT = re.compile(r"[^\w\s]", re.UNICODE)
@@ -3513,6 +3519,57 @@ def process(customer_identifier: str, message: str,
         return _process_unlocked(customer_identifier, message, use_ai, persist)
 
 
+RECENT_REPLIES_KEPT = 3
+
+
+def avoid_repeat(a: "Answer", recent: List[str]) -> str:
+    """Return a reply the customer has not just been sent.
+
+    15 Sep 2026, live: "Alto" and then "Alto k10 2012 modal" got the identical
+    "What would you like done on your Alto?" twice. Sending the same sentence
+    back reads like a broken machine, and on Instagram repeated identical
+    messages are also a spam signal. The last few replies are remembered, and
+    a reply that matches one of them is replaced - by an acknowledgement of
+    the car when that is all the customer gave, otherwise by a handover to
+    the team. A handover already sent is never swapped for anything else.
+    """
+    seen = {r.strip() for r in recent if r}
+    if a.reply.strip() not in seen:
+        return a.reply
+    # A real answer may be given again: a customer who asks the Gold
+    # Membership price twice should hear Rs 2,999 twice, not a handover. Only
+    # a reply that answered nothing concrete - a menu, a clarifying question,
+    # the generic "please call us" - is the robotic repeat this guards against.
+    if a.service or a.product:
+        return a.reply
+    hin = (a.frame.language if a.frame is not None else None) == "hi"
+    car = _car_phrase(a.car_brand, a.car_model)
+    if car and a.car_year:
+        car = f"{car} ({a.car_year})"
+    candidates: List[str] = []
+    if car and not a.service and not a.product:
+        candidates.append(
+            f"Noted - {car} 👍 Ab bas bata dijiye kya chahiye: PPF, ceramic, "
+            "denting/painting, service ya accessories?"
+            if hin else
+            f"Got it - {car} 👍 Just tell me what you need for it: PPF, ceramic "
+            "coating, denting/painting, service or accessories?")
+    handover = (
+        "Is par jo main bata sakta tha, bata diya 👍 Aage hamari team seedha "
+        f"help karegi - call/WhatsApp {PHONE}"
+        if hin else
+        "I've shared what I can on this 👍 For anything more, our team will "
+        f"help you directly - call/WhatsApp {PHONE}.")
+    candidates.append(handover)
+    for text in candidates:
+        if text.strip() not in seen:
+            if text is handover:
+                a.escalated = True
+                a.resolution = Resolution.ESCALATED
+            return text
+    return handover
+
+
 def _process_unlocked(customer_identifier: str, message: str,
                       use_ai: bool = True, persist: bool = True) -> Answer:
     """Full production path: context -> answer -> store -> analytics.
@@ -3545,6 +3602,13 @@ def _process_unlocked(customer_identifier: str, message: str,
     if followup:
         a.reply = f"{a.reply} {followup}"
 
+    # Never send back a reply this customer was just sent.
+    try:
+        recent = list((db.get_state(conversation_id) or {}).get("recent_replies") or [])
+    except Exception:
+        recent = []
+    a.reply = avoid_repeat(a, recent)
+
     # ---- persist dialogue state ------------------------------------------
     # One transition table, keyed by the message type decided in answer().
     try:
@@ -3555,6 +3619,7 @@ def _process_unlocked(customer_identifier: str, message: str,
                 a.next_slot, bool(followup) or _asks_for_model(a.reply))
         else:                              # answer() bypassed (should not happen)
             state = prev
+        state["recent_replies"] = (recent + [a.reply])[-RECENT_REPLIES_KEPT:]
         db.set_state(conversation_id, state)
     except Exception as error:
         print(f"[STATE] could not save state: {error!r}")

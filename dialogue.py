@@ -280,6 +280,14 @@ def resolve(p: Perception, state: Dict[str, Any], mtype: str,
     if mtype == MessageType.NEW_TOPIC:
         f.intent, f.service, f.product, f.issue = (p.intent, p.service,
                                                    p.product, p.issue)
+        # A bare "Pro" / "Normal" with nothing else on the table (15 Sep 2026,
+        # live: "Honda city 2017" then "Pro" got "Thanks for messaging"). The
+        # only Pro/Normal products this business sells are the GFX mats, so a
+        # short message that says only that is a GFX mat request. Anything
+        # that names a service or problem ("ceramic pro") is left alone.
+        if (not p.product and p.gfx_refinement and not p.service
+                and not p.issue and p.n_tokens <= 3):
+            f.product = p.gfx_refinement
         f.original_message = p.text
         f.facts = {}
         if p.ownership_service:                      # "i already have ppf, ..."

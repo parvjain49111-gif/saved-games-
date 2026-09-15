@@ -1353,6 +1353,83 @@ def live_quality_checks() -> List[Tuple[str, bool, str]]:
     return out
 
 
+def live_quality_checks_2() -> List[Tuple[str, bool, str]]:
+    """Owner-approved fixes 2, 3 and 5 from live traffic, 15 Sep 2026."""
+    out: List[Tuple[str, bool, str]] = []
+
+    def note(name, ok, detail=""):
+        out.append((name, bool(ok), detail))
+
+    import os, tempfile
+    import config as _cfg, database as _db
+    old_path = _cfg.DB_PATH
+    tmp = os.path.join(tempfile.gettempdir(), "cartrends_live_quality_2.db")
+    for x in ("", "-wal", "-shm"):
+        if os.path.exists(tmp + x):
+            os.remove(tmp + x)
+    _db.close_connection()
+    _cfg.DB_PATH = tmp
+
+    def run(cid, msgs):
+        return [brain.process(cid, m, use_ai=False) for m in msgs]
+
+    try:
+        _db.init_db()
+
+        # --- 2. the same reply is never sent twice in a row -------------------
+        r = run("rq_alto", ["Alto", "Alto k10 2012 modal"])
+        note("2: 'Alto' then 'Alto k10 2012 modal' do not get the identical reply",
+             r[1].reply != r[0].reply, r[1].reply[:90])
+        note("2: the second reply still names the Alto", "alto" in r[1].reply.lower(), r[1].reply[:90])
+        note("2: the second reply still asks what they need", "?" in r[1].reply, r[1].reply[:90])
+
+        r = run("rq_alto3", ["Alto", "Alto k10", "Alto 800"])
+        note("2: a third car-only message does not bounce back to an earlier reply",
+             r[2].reply not in (r[0].reply, r[1].reply), r[2].reply[:90])
+
+        r = run("rq_same_q", ["gold membership kitne ki hai?", "gold membership kitne ki hai?"])
+        note("2: a real answer asked for twice is given again, not swapped for a handover",
+             "2,999" in r[1].reply and not r[1].reply.startswith("I've shared what I can"),
+             r[1].reply[:90])
+
+        r = run("rq_generic", ["Honda city 2017", "Honda city 2017"])
+        note("2: the same car sent twice gets the car acknowledged, not the same menu",
+             r[1].reply != r[0].reply and "city" in r[1].reply.lower(), r[1].reply[:90])
+
+        r = run("rq_normal_flow", ["Creta pe scratches hain", "Creta", "price?"])
+        replies = [x.reply for x in r]
+        note("2: an ordinary conversation is not altered (no reply repeats, none replaced)",
+             len(set(replies)) == len(replies) and not any(
+                 x.startswith("I've shared what I can") for x in replies), str([x[:40] for x in replies]))
+
+        # --- 3. "Floor met" ----------------------------------------------------
+        r = run("rq_punch", ["Tata Punch", "Floor met"])
+        note("3: 'Floor met' is understood as floor mats", r[1].product == "floor_mats",
+             f"product={r[1].product}")
+        note("3: 'Floor met' does not get the what-do-you-need menu",
+             "what do you need" not in r[1].reply.lower(), r[1].reply[:90])
+        note("3: 'my car met with an accident' is not turned into a mat",
+             "met" in brain.normalise("my car met with an accident").split(),
+             brain.normalise("my car met with an accident"))
+
+        # --- 5. bare "Pro" / "Normal" after a car ------------------------------
+        r = run("rq_city", ["Honda city 2017", "Pro"])
+        note("5: 'Pro' after a car is GFX Pro", r[1].product == "gfx_pro", f"product={r[1].product}")
+        note("5: 'Pro' gets the GFX Pro reply for the City, not 'Thanks for messaging'",
+             "gfx pro" in r[1].reply.lower() and "city" in r[1].reply.lower()
+             and not r[1].reply.startswith("Thanks for messaging"), r[1].reply[:90])
+        r = run("rq_city_n", ["Honda city 2017", "Normal"])
+        note("5: 'Normal' after a car is GFX Normal", r[1].product == "gfx_normal", f"product={r[1].product}")
+    finally:
+        _db.close_connection()
+        _cfg.DB_PATH = old_path
+
+    a = brain.answer("ceramic pro coating", None, use_ai=False)
+    note("5: 'pro' inside a service request is not turned into GFX mats",
+         not (a.product or "").startswith("gfx"), f"product={a.product} service={a.service}")
+    return out
+
+
 def main(use_ai: bool = False) -> int:
     print("=" * 78)
     print(f" CAR TRENDS CHATBOT - AUTOMATED TEST SUITE   ({len(CASES)} cases)")
@@ -1387,7 +1464,8 @@ def main(use_ai: bool = False) -> int:
                       ("ADVERSARIAL CLASSES (negation / duration / slot / prices / fuzzy)", adversarial_checks),
                       ("STOCK CLAIMS", stock_claim_checks),
                       ("REAL CUSTOMER SPELLINGS", misspelling_checks),
-                      ("LIVE REPLY QUALITY (14-15 Sep)", live_quality_checks)]:
+                      ("LIVE REPLY QUALITY (14-15 Sep)", live_quality_checks),
+                      ("LIVE REPLY QUALITY 2 (repeat / floor met / Pro)", live_quality_checks_2)]:
         print("\n--- " + title + " ---")
         section_failed = 0
         for name, ok, detail in fn():
