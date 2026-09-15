@@ -831,6 +831,8 @@ CAR_MODELS = [
     "hyryder", "glanza", "urban cruiser", "civic", "wrv", "elevate",
     "kicks", "magnite", "sunny", "octavia rs", "legender", "hilux",
     "camry", "corolla", "etios", "yaris", "verito", "lodgy", "captur",
+    # "Gfx pro mats for nios 2019?" lost the car entirely (14 Sep 2026).
+    "grand i10 nios", "i10 nios", "nios",
 ]
 
 # Make names, so "Skoda octavia" and a bare "Skoda" both register.
@@ -855,6 +857,8 @@ CAR_BRANDS = {
     "compass": "Jeep", "jeep": "Jeep",
     "city": "Honda", "amaze": "Honda", "jazz": "Honda",
     "bmw": "BMW", "audi": "Audi", "mercedes": "Mercedes",
+    "nios": "Hyundai", "i10 nios": "Hyundai", "grand i10 nios": "Hyundai",
+    "grand i10": "Hyundai",
 }
 
 _YEAR = re.compile(r"\b(19[89]\d|20[0-4]\d)\b")
@@ -891,7 +895,9 @@ _CAR_TOKENS = {w for m in CAR_MODELS for w in m.split()} | set(CAR_MAKES)
 # How a model is written back to the customer ("Hyundai I20" reads wrong).
 _MODEL_DISPLAY = {"i10": "i10", "i20": "i20", "bmw": "BMW", "xuv700": "XUV700",
                   "xuv300": "XUV300", "wagonr": "WagonR", "kwid": "Kwid",
-                  "mg hector": "MG Hector", "vw": "VW"}
+                  "mg hector": "MG Hector", "vw": "VW",
+                  "nios": "Grand i10 Nios", "i10 nios": "Grand i10 Nios",
+                  "grand i10 nios": "Grand i10 Nios", "grand i10": "Grand i10"}
 
 
 def extract_car(norm: str) -> Tuple[Optional[str], Optional[str], Optional[str]]:
@@ -1986,6 +1992,28 @@ def answer(message: str, conversation_id: Optional[str] = None,
     # model (which once recited its own instructions).
     if mtype == MT.AMBIGUOUS:
         hin = _hinglish(norm)
+        # We asked "which service or product?" last turn and the customer
+        # still did not say ("Price?"). Asking the identical question again
+        # reads like a broken machine - 15 Sep 2026, live, twice in a row.
+        # Hand the customer to the team instead, keeping what we do know.
+        if state.get("last_message_type") == MT.AMBIGUOUS:
+            known = _car_phrase(brand, model)
+            if hin:
+                base.reply = (
+                    "Koi baat nahi 👍 main guess nahi karunga - hamari team "
+                    "seedha help karegi. Call/WhatsApp " + PHONE + " par "
+                    "batayein kya chahiye"
+                    + (f" aapki {known} ke liye." if known else "."))
+            else:
+                base.reply = (
+                    "No problem 👍 I don't want to guess - our team will help "
+                    f"you directly. Call/WhatsApp {PHONE} and tell them what "
+                    "you need" + (f" for your {known}." if known else "."))
+            base.source, base.intent = "ESCALATION", p.intent or Intent.OTHER
+            base.escalated, base.covered = True, False
+            base.confidence = 0.5
+            base.resolution = Resolution.ESCALATED
+            return base
         about = {Intent.PRICE_INQUIRY: ("the price", "price"),
                  Intent.AVAILABILITY_REQUEST: ("availability", "availability"),
                  Intent.DURATION: ("the time it takes", "time"),
@@ -2722,99 +2750,72 @@ def compose_gfx_reply(product: str, brand: Optional[str], model: Optional[str],
     for_car = f" for your {car}" if car else ""
     for_car_hi = f" aapki {car} ke liye" if car else ""
 
-    # ---- CTA (single, complete number) -----------------------------------
-    if hin:
-        cta = (f"Exact price aur current availability confirm karne ke liye "
-               f"call/WhatsApp karein: {PHONE} 🚗")
-    else:
-        cta = (f"For the exact fitting, price and current availability"
-               f"{for_car}, call or WhatsApp us on {PHONE}. 🚗")
+    # ---- Short on purpose -----------------------------------------------
+    # Owner, 15 Sep 2026: a nine-line bullet list for "Gfx pro mats for nios
+    # 2019?" is something nobody reads on Instagram. One or two sentences:
+    # what it is, the two or three things that matter, how to get the price.
+    ask_car = "" if car else (" Kaunsi car ke liye chahiye?" if hin
+                              else " Which car is it for?")
+    cta = (f"Exact price aur fitting ke liye call/WhatsApp: {PHONE}" if hin
+           else f"For the exact price and fitting, call/WhatsApp {PHONE}.")
 
     # ---- Comparison ------------------------------------------------------
     if asks_compare:
         if hin:
-            body = (
-                "GFX Normal aur GFX Pro/Lifelong dono Car Trends par available "
-                "hain.\n\nGFX Pro/Lifelong premium option hai - vehicle-specific "
-                "molded fit, extensive coverage, raised edges, durable TPV/TPE "
-                "material aur easy cleaning.\n\nGFX Normal simple aur "
-                "budget-friendly option hai - lightweight, flexible aur clean "
-                "karna easy.\n\nAapki car ke liye available variant aur exact "
-                f"price team confirm kar degi: {PHONE}")
-        else:
-            body = (
-                "GFX Normal and GFX Pro/Lifelong are both available at Car "
-                "Trends.\n\nGFX Pro/Lifelong is the more premium option - "
-                "vehicle-specific molded fit, extensive coverage, raised edges, "
-                "durable TPV/TPE construction and easy cleaning.\n\nGFX Normal is "
-                "the simpler option for customers looking for a more "
-                "budget-friendly mat - lightweight, flexible and easy to clean."
-                "\n\nFor your car model, our team can confirm the available "
-                f"variant and exact price on {PHONE}.")
-        return body
+            return ("Dono available hain 👍 GFX Pro/Lifelong premium hai - custom "
+                    "molded fit, TPV/TPE material aur raised edges. GFX Normal "
+                    "budget-friendly hai - lightweight aur clean karna easy."
+                    f"{ask_car} {cta}")
+        return ("We have both 👍 GFX Pro/Lifelong is the premium one - custom "
+                "molded fit, TPV/TPE material and raised edges. GFX Normal is the "
+                "budget-friendly one - lightweight and easy to clean."
+                f"{ask_car} {cta}")
 
     # ---- Price: no verified figure exists, so status + CTA only ----------
     if intent == Intent.PRICE_INQUIRY:
         if hin:
-            return (f"{variant} mats{for_car_hi} available option hain. Exact "
-                    "price car ke model aur variant par depend karta hai - "
-                    f"team confirm kar degi. Call/WhatsApp: {PHONE} 🚗")
-        return (f"We offer {variant} mats{for_car}. The exact price depends on "
-                "the car model and variant, so our team will confirm it for "
-                f"you - call or WhatsApp {PHONE}. 🚗")
+            return (f"{variant} mats{for_car_hi}: exact price car model aur "
+                    f"variant par depend karta hai.{ask_car} Team confirm kar "
+                    f"degi - call/WhatsApp: {PHONE}")
+        return (f"{variant} mats{for_car}: the exact price depends on the car "
+                f"model and variant.{ask_car} Our team will confirm it - "
+                f"call/WhatsApp {PHONE}.")
 
     # ---- Live-stock question: never claim stock -------------------------
     if asks_live:
         if hin:
-            return (f"{variant} mats hum offer karte hain{for_car_hi}. Aapke "
+            return (f"{variant} mats hum offer karte hain{for_car_hi} 👍 Aapke "
                     "exact variant ka current stock team confirm kar degi - "
-                    f"call/WhatsApp: {PHONE} 🚗")
-        return (f"We do offer {variant} mats{for_car}. Current stock for your "
-                "exact variant is something our team confirms - please call "
-                f"or WhatsApp {PHONE}. 🚗")
+                    f"call/WhatsApp: {PHONE}")
+        return (f"We do offer {variant} mats{for_car} 👍 Current stock for your "
+                f"exact variant is confirmed by our team - call/WhatsApp {PHONE}.")
 
     # ---- GFX Pro ---------------------------------------------------------
     if product == "gfx_pro":
         if hin:
-            head = (f"Bilkul 👍 {car + ' ke liye ' if car else ''}GFX Pro/Lifelong "
-                    "mats available option hain - premium vehicle-specific "
-                    "molded floor mats.")
-            return f"{head}\n\n{_bullets(pro_b)}\n\n{cta}"
-        head = (f"GFX Pro/Lifelong mats are a premium vehicle-specific molded "
-                f"floor-mat option at Car Trends Car Mall{for_car}. 🚗")
-        return f"{head}\n\nThey offer:\n{_bullets(pro_b)}\n\n{cta}"
+            return (f"Haan 👍 {car + ' ke liye ' if car else ''}GFX Pro/Lifelong "
+                    "mats - custom molded fit, TPV/TPE material aur raised edges "
+                    f"jo dirt aur spills rokte hain.{ask_car} {cta}")
+        return (f"Yes 👍 GFX Pro/Lifelong mats{for_car} - custom molded fit, "
+                "TPV/TPE material and raised edges that hold dirt and spills."
+                f"{ask_car} {cta}")
 
     # ---- GFX Normal ------------------------------------------------------
     if product == "gfx_normal":
         if hin:
-            head = (f"GFX Normal mats{for_car_hi} simple aur budget-friendly "
-                    "option hain.")
-            return (f"{head}\n\n{_bullets(normal_b)}\n\nAgar aap custom fit aur "
-                    "zyada coverage chahte hain to GFX Pro/Lifelong bhi "
-                    f"available hai.\n\n{cta}")
-        head = (f"GFX Normal mats are the simpler, budget-friendly GFX option"
-                f"{for_car}.")
-        return (f"{head}\n\n{_bullets(normal_b)}\n\nIf you want a custom "
-                "molded fit and fuller coverage, GFX Pro/Lifelong is the other "
-                f"variant we offer.\n\n{cta}")
+            return (f"GFX Normal mats{for_car_hi} budget-friendly option hain - "
+                    f"lightweight aur clean karna easy.{ask_car} {cta}")
+        return (f"GFX Normal mats{for_car} are the budget-friendly option - "
+                f"lightweight and easy to clean.{ask_car} {cta}")
 
-    # ---- "GFX mat" with no variant: explain both, guide --------------------
+    # ---- "GFX mat" with no variant: name both in one line ----------------
     if hin:
-        head = (f"Haan 👍 GFX mats{for_car_hi} available option hain. Hum do "
-                "variants offer karte hain - GFX Normal aur GFX Pro/Lifelong.")
-        mid = ("GFX Pro/Lifelong premium option hai: vehicle-specific molded "
-               "fit, edge-to-edge coverage, durable TPV/TPE material, raised "
-               "edges jo dirt aur spills contain karne mein help karte hain, "
-               "anti-skid retention aur easy cleaning. GFX Normal simple, "
-               "budget-friendly option hai.")
-        return f"{head}\n\n{mid}\n\n{cta}"
-    head = (f"Yes 👍 GFX mats are available{for_car}. We offer two variants - "
-            "GFX Normal and GFX Pro/Lifelong.")
-    mid = ("GFX Pro/Lifelong is the premium option: vehicle-specific molded "
-           "fit, edge-to-edge coverage, durable TPV/TPE material, raised edges "
-           "to help contain dirt and spills, anti-skid retention and easy "
-           "cleaning. GFX Normal is the simpler, budget-friendly option.")
-    return f"{head}\n\n{mid}\n\n{cta}"
+        return (f"Haan 👍 GFX mats{for_car_hi} do options mein hain: GFX "
+                "Pro/Lifelong (custom molded fit, raised edges) aur GFX Normal "
+                f"(budget-friendly).{ask_car} {cta}")
+    return (f"Yes 👍 we have GFX mats{for_car} in two options: GFX Pro/Lifelong "
+            "(custom molded fit, raised edges) and GFX Normal (budget-friendly)."
+            f"{ask_car} {cta}")
 
 
 def compose_product_reply(product_key: str, car_model: Optional[str],
@@ -3422,8 +3423,8 @@ def lead_followup(a: "Answer") -> str:
         return ""
     if a.answer_to_pending:              # we are continuing, not re-asking
         return ""
-    if a.product in GFX_KEYS and a.car_model:
-        return ""                       # composed reply already names the car
+    if a.product in GFX_KEYS:
+        return ""                       # composed reply names or asks for the car
 
     # The customer already told us the car, but the approved answer still
     # ends with "reply with your car model". Repeating a question they just

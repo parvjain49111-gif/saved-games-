@@ -1022,6 +1022,16 @@ PRODUCTS: Dict[str, Dict[str, Any]] = {
         "category": Service.ACCESSORIES,
         "verified": False, "faqs": [],
     },
+    # 15 Sep 2026, live: "Polo parcel tray available?" was not recognised -
+    # "parcel" was even auto-corrected to "price" - so the customer was asked
+    # "which service or product is it for?" twice. No approved answer says we
+    # stock it, so it is understood but never claimed: the team confirms.
+    "parcel_tray": {
+        "label": "parcel tray",
+        "detail": None, "benefit": None,
+        "category": Service.ACCESSORIES,
+        "verified": False, "faqs": [],
+    },
 }
 
 # Alias -> product key. Written lowercase; matched on the normalised text.
@@ -1035,12 +1045,19 @@ PRODUCT_ALIASES: Dict[str, str] = {
     "gfx": "gfx", "gfx mat": "gfx", "gfx mats": "gfx",
     "gfx pro": "gfx_pro", "gfx pro mat": "gfx_pro", "gfx pro mats": "gfx_pro",
     "gfx lifelong": "gfx_pro", "gfx pro lifelong": "gfx_pro",
+    # written as one word: "Seltos 2026 gfxpro"
+    "gfxpro": "gfx_pro", "gfxpro mat": "gfx_pro", "gfxpro mats": "gfx_pro",
     "pro mat": "gfx_pro", "pro mats": "gfx_pro", "gfx premium": "gfx_pro",
     "gfx normal": "gfx_normal", "normal gfx": "gfx_normal",
     "gfx normal mat": "gfx_normal", "gfx normal mats": "gfx_normal",
     "normal mat": "gfx_normal", "normal mats": "gfx_normal",
     "traditional mat": "gfx_normal", "traditional mats": "gfx_normal",
     "simple mat": "gfx_normal",
+
+    "parcel tray": "parcel_tray", "parcel trays": "parcel_tray",
+    "parcel shelf": "parcel_tray", "parcel": "parcel_tray",
+    "hat shelf": "parcel_tray", "luggage cover": "parcel_tray",
+    "parcle tray": "parcel_tray",
 
     "seat cover": "seat_covers", "seat covers": "seat_covers",
     "seatcover": "seat_covers", "seat kavar": "seat_covers",

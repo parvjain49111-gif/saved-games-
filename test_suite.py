@@ -1275,6 +1275,84 @@ def misspelling_checks() -> List[Tuple[str, bool, str]]:
     return out
 
 
+def live_quality_checks() -> List[Tuple[str, bool, str]]:
+    """Replies the owner flagged from live traffic, 14-15 Sep 2026."""
+    out: List[Tuple[str, bool, str]] = []
+
+    def note(name, ok, detail=""):
+        out.append((name, bool(ok), detail))
+
+    import os, tempfile
+    import config as _cfg, database as _db
+    old_path = _cfg.DB_PATH
+    tmp = os.path.join(tempfile.gettempdir(), "cartrends_live_quality.db")
+    for x in ("", "-wal", "-shm"):
+        if os.path.exists(tmp + x):
+            os.remove(tmp + x)
+    _db.close_connection()
+    _cfg.DB_PATH = tmp
+    try:
+        _db.init_db()
+
+        # --- Zubair: "Polo parcel tray available?" then "Price?" ----------
+        z1 = brain.process("lq_zubair", "Polo parcel tray available?", use_ai=False)
+        note("parcel tray is recognised as a product", z1.product == "parcel_tray",
+             f"product={z1.product}")
+        note("'parcel' is no longer auto-corrected to 'price'",
+             "parcel" in brain.normalise("Polo parcel tray available?"),
+             brain.normalise("Polo parcel tray available?"))
+        note("parcel tray reply does not ask which product it is",
+             "which service or product" not in z1.reply.lower(), z1.reply[:90])
+        note("parcel tray reply names the item and the Polo",
+             "parcel tray" in z1.reply.lower() and "polo" in z1.reply.lower(), z1.reply[:90])
+        note("parcel tray is never claimed as in stock (unverified product)",
+             z1.escalated and "in stock" not in z1.reply.lower(), z1.reply[:90])
+        z2 = brain.process("lq_zubair", "Price?", use_ai=False)
+        note("the follow-up price question stays on the parcel tray",
+             z2.product == "parcel_tray", f"product={z2.product}")
+        note("the follow-up is not the same reply again", z2.reply != z1.reply, z2.reply[:90])
+
+        # --- a cold question asked twice must not get the same question back
+        c1 = brain.process("lq_cold", "price?", use_ai=False)
+        c2 = brain.process("lq_cold", "price?", use_ai=False)
+        note("first cold 'price?' still asks what it is for", "which" in c1.reply.lower(), c1.reply[:90])
+        note("second cold 'price?' is not the identical question", c2.reply != c1.reply, c2.reply[:90])
+        note("second cold 'price?' hands over to the team with the number",
+             c2.escalated and kb.PHONE in c2.reply and c2.reply.count(kb.PHONE) == 1, c2.reply[:90])
+        p1 = brain.process("lq_cold_car", "Polo", use_ai=False)
+        p2 = brain.process("lq_cold_car", "price?", use_ai=False)
+        p3 = brain.process("lq_cold_car", "available?", use_ai=False)
+        note("the handover keeps the car the customer gave",
+             p3.reply != p2.reply and "polo" in p3.reply.lower(), p3.reply[:90])
+    finally:
+        _db.close_connection()
+        _cfg.DB_PATH = old_path
+
+    # --- GFX replies are short -------------------------------------------
+    for q in ["Gfx pro mats for nios 2019?", "Honda city / GFX pro", "GFX mats",
+              "gfx mats for tata tiago 2022 available?", "Thar GFx pro",
+              "Tata punch facelift 2026 ka gfx pro mat miljayrga",
+              "GFX normal aur pro mein difference?", "Normal mat ke benefits?"]:
+        r = brain.answer(q, None, use_ai=False)
+        note(f"GFX reply is short (<= 260 chars): {q!r}", len(r.reply) <= 260,
+             f"{len(r.reply)} chars: {r.reply[:80]}")
+        note(f"GFX reply has no bullet list: {q!r}", "•" not in r.reply and "\n" not in r.reply,
+             r.reply[:80])
+        note(f"GFX reply carries the number exactly once: {q!r}",
+             r.reply.count(kb.PHONE) == 1, str(r.reply.count(kb.PHONE)))
+
+    r = brain.answer("Gfx pro mats for nios 2019?", None, use_ai=False)
+    note("Nios is recognised as the car", r.car_model and "nios" in r.car_model.lower(),
+         f"car={r.car_model}")
+    note("the Nios reply names the Nios", "nios" in r.reply.lower(), r.reply[:90])
+    r = brain.answer("GFX mats", None, use_ai=False)
+    note("GFX with no car asks which car, once",
+         "which car" in r.reply.lower() and r.reply.lower().count("car model") == 0, r.reply[:120])
+    r = brain.answer("Seltos 2026 gfxpro", None, use_ai=False)
+    note("'gfxpro' written as one word is GFX Pro", r.product == "gfx_pro", f"product={r.product}")
+    return out
+
+
 def main(use_ai: bool = False) -> int:
     print("=" * 78)
     print(f" CAR TRENDS CHATBOT - AUTOMATED TEST SUITE   ({len(CASES)} cases)")
@@ -1308,7 +1386,8 @@ def main(use_ai: bool = False) -> int:
                       ("ROBUSTNESS (typos / entities / console memory)", robustness_checks),
                       ("ADVERSARIAL CLASSES (negation / duration / slot / prices / fuzzy)", adversarial_checks),
                       ("STOCK CLAIMS", stock_claim_checks),
-                      ("REAL CUSTOMER SPELLINGS", misspelling_checks)]:
+                      ("REAL CUSTOMER SPELLINGS", misspelling_checks),
+                      ("LIVE REPLY QUALITY (14-15 Sep)", live_quality_checks)]:
         print("\n--- " + title + " ---")
         section_failed = 0
         for name, ok, detail in fn():
