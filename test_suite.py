@@ -1529,6 +1529,63 @@ def membership_and_model_number_checks() -> List[Tuple[str, bool, str]]:
     return out
 
 
+def thanks_checks() -> List[Tuple[str, bool, str]]:
+    """"Thanks" must close the chat, not repeat the answer (16 Sep 2026, live)."""
+    out: List[Tuple[str, bool, str]] = []
+
+    def note(name, ok, detail=""):
+        out.append((name, bool(ok), detail))
+
+    import os, tempfile
+    import config as _cfg, database as _db
+    old_path = _cfg.DB_PATH
+    tmp = os.path.join(tempfile.gettempdir(), "cartrends_thanks.db")
+    for x in ("", "-wal", "-shm"):
+        if os.path.exists(tmp + x):
+            os.remove(tmp + x)
+    _db.close_connection()
+    _cfg.DB_PATH = tmp
+
+    def run(cid, msgs):
+        return [brain.process(cid, m, use_ai=False) for m in msgs]
+
+    try:
+        _db.init_db()
+        # the owner's own test: parcel tray, then "thanks"
+        r = run("th_parcel", ["Polo parcel tray available?", "thanks"])
+        note("thanks does not repeat the answer", r[1].reply != r[0].reply, r[1].reply[:90])
+        note("thanks is answered briefly", len(r[1].reply) <= 140, f"{len(r[1].reply)} chars")
+        note("thanks does not restate the product", "parcel tray" not in r[1].reply.lower(), r[1].reply[:90])
+        note("thanks keeps the number once", r[1].reply.count(kb.PHONE) == 1, r[1].reply[:90])
+        # the topic survives, so a later question still knows what it is about
+        r2 = brain.process("th_parcel", "price?", use_ai=False)
+        note("the topic survives a thank-you", r2.product == "parcel_tray", f"product={r2.product}")
+
+        for cid, msgs in [("th_ppf", ["Creta PPF chahiye", "thank you"]),
+                          ("th_mats", ["GFX mats for Swift", "ok thanks bhai"]),
+                          ("th_hi", ["ceramic coating karwana hai", "shukriya"])]:
+            r = run(cid, msgs)
+            note(f"{msgs[1]!r} closes instead of repeating", r[1].reply != r[0].reply, r[1].reply[:90])
+            note(f"{msgs[1]!r} is short", len(r[1].reply) <= 140, f"{len(r[1].reply)} chars")
+            note(f"{msgs[1]!r} does not promise a booking slot",
+                 "slot" not in r[1].reply.lower(), r[1].reply[:90])
+
+        # a thank-you that still carries a question is NOT a closing message
+        r = run("th_q", ["Creta PPF chahiye", "thanks, ppf ka price bhi bata do"])
+        note("a thank-you with a question is still answered",
+             "price" in r[1].reply.lower() or r[1].escalated, r[1].reply[:90])
+    finally:
+        _db.close_connection()
+        _cfg.DB_PATH = old_path
+
+    note("'thanks' alone is recognised as a closing message",
+         brain.perceive("thanks").is_thanks and brain.perceive("shukriya").is_thanks)
+    note("a real question is never a closing message",
+         not brain.perceive("ppf ka price kya hai").is_thanks
+         and not brain.perceive("thanks for the info, ceramic bhi karte ho?").is_thanks)
+    return out
+
+
 def main(use_ai: bool = False) -> int:
     print("=" * 78)
     print(f" CAR TRENDS CHATBOT - AUTOMATED TEST SUITE   ({len(CASES)} cases)")
@@ -1565,7 +1622,8 @@ def main(use_ai: bool = False) -> int:
                       ("REAL CUSTOMER SPELLINGS", misspelling_checks),
                       ("LIVE REPLY QUALITY (14-15 Sep)", live_quality_checks),
                       ("LIVE REPLY QUALITY 2 (repeat / floor met / Pro)", live_quality_checks_2),
-                      ("GOLD MEMBERSHIP REMOVED / ALTO 800", membership_and_model_number_checks)]:
+                      ("GOLD MEMBERSHIP REMOVED / ALTO 800", membership_and_model_number_checks),
+                      ("THANKS CLOSES THE CHAT", thanks_checks)]:
         print("\n--- " + title + " ---")
         section_failed = 0
         for name, ok, detail in fn():

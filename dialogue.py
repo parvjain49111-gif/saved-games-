@@ -84,6 +84,7 @@ class Perception:
     day: Optional[str] = None
     language: str = "en"
     is_affirm: bool = False
+    is_thanks: bool = False                   # "thanks" / "shukriya" - closes the chat
     is_cancel: bool = False
     is_side: bool = False
     is_complaint: bool = False

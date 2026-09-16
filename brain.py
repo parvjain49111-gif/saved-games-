@@ -237,6 +237,7 @@ _VOCAB_LIST_NAMES = (
     "COMPARISON_WORDS", "AVAILABILITY_WORDS", "PICKUP_WORDS",
     "COMPLAINT_WORDS", "HUMAN_WORDS", "HIGH_INTENT", "MEDIUM_INTENT",
     "AFFIRM_WORDS", "CANCEL_WORDS", "OPTIONS_WORDS", "LIVE_STOCK_WORDS",
+    "THANKS_WORDS",
     "RECOMMEND_WORDS", "STRONG_BOOKING_WORDS", "OWNERSHIP_WORDS",
     "WANT_WORDS", "BOTH_WORDS", "COMMON_WORDS", "CAR_MODELS", "CAR_MAKES",
 )
@@ -651,6 +652,14 @@ CANCEL_WORDS = ["forget that", "forget it", "leave that", "leave it",
                 "cancel that", "never mind", "nevermind", "chhod do",
                 "chod do", "rehne do", "rahne do", "skip that", "drop that",
                 "scrap that", "ignore that"]
+
+# "thanks" is not a new question - it closes the conversation. Without this
+# the bot treated it as "more about the current topic" and repeated the whole
+# answer it had just given (16 Sep 2026, live, after a parcel-tray answer).
+THANKS_WORDS = ["thanks", "thank", "thanku", "thankyou", "thanx", "thnx", "thnks",
+                "tnx", "shukriya", "shukria", "dhanyavad", "dhanyawad",
+                "dhanyvaad", "bahut badhiya", "great help", "helpful",
+                "bye", "goodbye", "alvida", "good night"]
 
 AFFIRM_WORDS = ["haan", "han", "hanji", "ha", "yes", "yeah", "yep", "ok",
                 "okay", "sure", "theek hai", "thik hai", "done", "kar do",
@@ -1812,6 +1821,12 @@ def perceive(message: str) -> dialogue.Perception:
             p.gfx_refinement = "gfx_pro"
         elif "normal" in words and "pro" not in words:
             p.gfx_refinement = "gfx_normal"
+    # "thanks", "ok thanks bhai", "shukriya" - gratitude and nothing else.
+    # "thanks, ppf ka price bhi bata do" still carries a question, so it is
+    # NOT a closing message.
+    p.is_thanks = (contains_any(norm, THANKS_WORDS)
+                   and not p.service and not p.product and not p.issue
+                   and not p.day and not p.has_followup and p.n_tokens <= 5)
     return p
 
 
@@ -2009,6 +2024,31 @@ def answer(message: str, conversation_id: Optional[str] = None,
         base.preferred_day = extract_preferred_day(norm)
         if "booking" in asks:
             base.resolution = Resolution.BOOKING_REQUESTED
+        return base
+
+    # ---- "Thanks" closes the conversation --------------------------------
+    # Never restate the answer they are thanking us for. The topic is kept in
+    # the state, so a later "and the price?" still knows what they mean.
+    if p.is_thanks:
+        # The conversation's language, not this one word's: "shukriya" on its
+        # own has no language of its own, and a Hindi thank-you must not get
+        # an English sign-off.
+        hin = ((frame.language or "") == "hi" or _hinglish(norm)
+               or contains_any(norm, ["shukriya", "shukria", "dhanyavad",
+                                      "dhanyawad", "dhanyvaad", "alvida"]))
+        base.reply = (
+            f"Khushi hui 👍 Aur kuch chahiye to yahin message kar dijiye ya "
+            f"WhatsApp karein: {PHONE}"
+            if hin else
+            f"Happy to help 👍 If you need anything else, just message us here "
+            f"or on WhatsApp {PHONE}.")
+        base.source = "RULE"
+        base.confidence, base.covered = 0.9, True
+        base.resolution = Resolution.ANSWERED
+        # A sign-off asks for nothing, so the "share your car model" line must
+        # not be bolted on. The frame still carries the topic, so the state
+        # (and the next question) keep it.
+        base.service = None
         return base
 
     # ---- Short, cold, ambiguous: ask, don't guess -----------------------------
