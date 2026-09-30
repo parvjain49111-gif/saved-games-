@@ -363,8 +363,10 @@ db.record_public_reply(_p1)
 _p2 = comments.vary_public_reply(comments.public_reply(_a, "location"), "cid-2", False)
 check("AS2: the same answer is rephrased rather than repeated word for word",
       _p1 != _p2, f"{_p1!r} vs {_p2!r}")
-check("AS3: the rephrasing keeps the meaning (only the greeting rotates)",
-      comments._strip_opener(_p1) == comments._strip_opener(_p2))
+check("AS3: the rephrasing keeps the meaning (both still give the address)",
+      "dholai" in _p1.lower() and "dholai" in _p2.lower()
+      and comments._strip_opener(_p1) != comments._strip_opener(_p2),
+      f"{_p1!r} vs {_p2!r}")
 check("AS4: the same comment id always produces the same wording (a retry never posts something new)",
       comments.vary_public_reply(comments.public_reply(_a, "location"), "cid-9", False)
       == comments.vary_public_reply(comments.public_reply(_a, "location"), "cid-9", False))
@@ -416,6 +418,67 @@ bot._meta_state.update({"ok": True, "detail": "fine", "checked_at": "now"})
 _r = bot.meta_health()
 check("AS14: /health/meta answers 200 when Meta is answering",
       _r.status_code == 200 and b'"ok"' in _r.body)
+
+
+# ---------------------------------------------------------------------------
+# REPLY QUALITY, from the owner's review of 55 live replies (30 Sep 2026):
+# a car name under a mats Reel, Hinglish questions, "send the link", a bare
+# city, and the same sentence going out 16 times.
+# ---------------------------------------------------------------------------
+print("\n--- reply quality (reel context / language / variety) ---")
+
+_MATS_REEL = {"caption": "GFX Pro 7D floor mats for every car - Car Trends Jaipur",
+              "service": None, "product": None}
+_seen_cap = brain.perceive(_MATS_REEL["caption"])
+_MATS_REEL["service"], _MATS_REEL["product"] = _seen_cap.service, _seen_cap.product
+check("RQ1: a Reel's caption tells us what it sells",
+      _MATS_REEL["product"] in ("gfx", "gfx_pro", "gfx_normal"), str(_MATS_REEL))
+
+_names = []
+for _i, _car in enumerate(["Swift 2020", "Jeep compass", "Curvv ev 2026", "Safari?"]):
+    _r = comments.handle_comment(f"rq{_i}", f"rqu{_i}", "reelRQ", _car, use_ai=False,
+                                 topic_hint=_MATS_REEL)
+    _names.append(_r["public"])
+    check(f"RQ2: {_car!r} under a mats Reel is answered about mats",
+          "mat" in _r["public"].lower() and "what you need" not in _r["public"].lower(),
+          _r["public"])
+check("RQ3: the Reel topic never overrides what the customer actually said",
+      "ppf" in comments.handle_comment("rqp", "rqup", "reelRQ", "PPF karwana hai",
+                                       use_ai=False, topic_hint=_MATS_REEL)["private"].lower())
+check("RQ4: with no Reel topic the old generic reply is still used",
+      "dm" in comments.handle_comment("rqn", "rqun", "reelNONE", "Swift 2020",
+                                      use_ai=False, topic_hint=None)["public"].lower())
+
+for _i, _q in enumerate(["Ertiga ka price", "S presso ka rate", "Mahendra 7xo ka mil jayega"]):
+    _r = comments.handle_comment(f"rqh{_i}", f"rqhu{_i}", "reelRQ2", _q, use_ai=False,
+                                 topic_hint=_MATS_REEL)
+    check(f"RQ5: Hinglish question gets a Hinglish reply: {_q!r}",
+          any(w in _r["public"].lower() for w in ("karein", "karegi", "dijiye", "hai")),
+          _r["public"])
+_r = comments.handle_comment("rqe", "rque", "reelRQ2", "Price", use_ai=False, topic_hint=_MATS_REEL)
+check("RQ6: an English question still gets English",
+      not any(w in _r["public"].lower() for w in ("karein", "karegi", "dijiye")), _r["public"])
+
+_r = comments.handle_comment("rql", "rqul", "reelRQ3", "Maruti Celerio ka hai to link", use_ai=False)
+check("RQ7: 'send the link' is answered - we have no website",
+      "website" in _r["public"].lower() or "nahi hai" in _r["public"].lower(), _r["public"])
+
+for _i, _city in enumerate(["Bangalore", "Pune"]):
+    _r = comments.handle_comment(f"rqc{_i}", f"rqcu{_i}", "reelRQ4", _city, use_ai=False)
+    check(f"RQ8: a bare city name is answered: {_city!r}",
+          bool(_r["public"]) and "jaipur" in _r["public"].lower(), _r["public"])
+    check(f"RQ8: no delivery is promised to {_city!r}",
+          not any(w in _r["public"].lower() for w in ("deliver", "ship", "courier", "bhej denge")),
+          _r["public"])
+
+_loc = []
+for _i in range(3):
+    _r = comments.handle_comment(f"rqL{_i}", f"rqLu{_i}", "reelRQ5", "Location", use_ai=False)
+    _loc.append(_r["public"])
+check("RQ9: three location comments get three different sentences",
+      len({comments._strip_opener(x) for x in _loc}) == 3, str(_loc))
+check("RQ9: every one still gives the real address",
+      all("dholai" in x.lower() for x in _loc), str(_loc))
 
 failed = [(n, d) for n, ok, d in RESULTS if not ok]
 print(f" comment checks: {len(RESULTS) - len(failed)}/{len(RESULTS)} passed")

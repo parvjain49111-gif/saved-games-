@@ -215,6 +215,18 @@ CREATE TABLE IF NOT EXISTS comment_threads (
     created_at   TEXT NOT NULL
 );
 
+-- What each Reel is actually selling, read once from its caption. A comment
+-- that names only a car ("Swift 2020") under a floor-mat Reel is asking about
+-- MATS for that car; without this the bot could only say "DM us what you
+-- need", which is what 14 customers got in September 2026.
+CREATE TABLE IF NOT EXISTS media_topics (
+    media_id   TEXT PRIMARY KEY,
+    caption    TEXT,
+    service    TEXT,
+    product    TEXT,
+    fetched_at TEXT NOT NULL
+);
+
 -- Every PUBLIC comment reply we posted, by hash of its text. Instagram reads
 -- the same sentence posted under comment after comment as spam and can lock
 -- the account, so a reply that was already used recently is rephrased before
@@ -336,6 +348,35 @@ def thread_owner(comment_id: str) -> Optional[str]:
     row = get_connection().execute(
         "SELECT commenter_id FROM comment_threads WHERE comment_id = ?", (comment_id,)).fetchone()
     return row["commenter_id"] if row else None
+
+
+def get_media_topic(media_id: str) -> Optional[Dict[str, Any]]:
+    """What this Reel sells, or None when it has never been looked up."""
+    if not media_id:
+        return None
+    row = get_connection().execute(
+        "SELECT caption, service, product FROM media_topics WHERE media_id = ?",
+        (media_id,)).fetchone()
+    if not row:
+        return None
+    return {"caption": row["caption"] or "", "service": row["service"],
+            "product": row["product"]}
+
+
+def set_media_topic(media_id: str, caption: str, service: Optional[str],
+                    product: Optional[str]) -> None:
+    """Remember it, so the caption is fetched from Meta only once per Reel."""
+    if not media_id:
+        return
+    conn = get_connection()
+    with _write_lock:
+        conn.execute(
+            "INSERT INTO media_topics (media_id, caption, service, product, fetched_at) "
+            "VALUES (?,?,?,?,?) ON CONFLICT(media_id) DO UPDATE SET "
+            "  caption = excluded.caption, service = excluded.service, "
+            "  product = excluded.product, fetched_at = excluded.fetched_at",
+            (media_id, (caption or "")[:2000], service, product, now_iso()))
+        conn.commit()
 
 
 def _public_reply_hash(text: str) -> str:

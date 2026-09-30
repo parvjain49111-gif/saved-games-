@@ -647,6 +647,49 @@ _recent_public_texts: deque = deque(maxlen=300)
 _last_public_reply: List[Optional[float]] = [None]
 
 
+def media_topic(media_id: str) -> Optional[Dict[str, Any]]:
+    """What the Reel a comment sits under is actually selling.
+
+    The caption is read from Meta ONCE per Reel and cached. "Swift 2020" under
+    a floor-mat Reel is a question about mats for a Swift; without the caption
+    the bot can only ask what they need. Never raises, and returns None when
+    the caption names nothing we recognise.
+    """
+    if not media_id:
+        return None
+    try:
+        row = db.get_media_topic(media_id)
+    except Exception as error:
+        print(f"[REEL] could not read the cached topic: {error!r}")
+        row = None
+    if row is None:
+        caption = ""
+        if config.send_is_configured():
+            try:
+                r = requests.get(f"{config.GRAPH_API_BASE}/{media_id}",
+                                 params={"fields": "caption"},
+                                 headers={"Authorization": f"Bearer {config.PAGE_ACCESS_TOKEN}"},
+                                 timeout=GRAPH_TIMEOUT)
+                if r.status_code == 200:
+                    caption = ((r.json() or {}).get("caption") or "")
+                else:
+                    print(f"[REEL] caption lookup failed: HTTP {r.status_code}")
+            except Exception as error:
+                print(f"[REEL] caption lookup failed: {type(error).__name__}")
+        seen = brain.perceive(caption[:400]) if caption else None
+        row = {"caption": caption,
+               "service": getattr(seen, "service", None),
+               "product": getattr(seen, "product", None)}
+        try:
+            db.set_media_topic(media_id, row["caption"], row["service"], row["product"])
+        except Exception as error:
+            print(f"[REEL] could not cache the topic: {error!r}")
+        if row["service"] or row["product"]:
+            print(f"[REEL] {media_id} is about "
+                  f"{row['product'] or row['service']} (from its caption)")
+    return row if (row.get("service") or row.get("product")) else None
+
+
 def public_reply_allowed() -> bool:
     """A daily ceiling on PUBLIC comment replies.
 
@@ -767,7 +810,8 @@ def _handle_comment_in_turn(comment_id: str, commenter_id: str, media_id: str,
     print("\n" + "=" * 70)
     print(f"[COMMENT {commenter_id} on media {media_id}] {text}")
     print("-" * 70)
-    result = comments.handle_comment(comment_id, commenter_id, media_id, text)
+    result = comments.handle_comment(comment_id, commenter_id, media_id, text,
+                                     topic_hint=media_topic(media_id))
     a = result["answer"]
     if result.get("skipped") or a is None:
         print("[COMMENT] no reply (content-free / spam).")

@@ -53,6 +53,21 @@ _FINANCE_WORDS = ["emi", "finance", "loan", "downpayment", "down payment", "inst
                   "instalment", "kist"]
 # "ceramic 9H hai na?", "ppf peel to nahi hogi?", "kal pakka?" - the customer
 # asserts a property and asks us to confirm it: never a public "Yes".
+# "Maruti Celerio ka hai to link" - there is no website to link to.
+_LINK_WORDS = ["link", "website", "site", "web page", "webpage", "url",
+               "online order", "online site"]
+# A bare city name is a real question ("do you serve my city?"), not noise.
+_CITY_WORDS = ["bangalore", "bengaluru", "pune", "mumbai", "bombay", "delhi",
+               "new delhi", "noida", "gurgaon", "gurugram", "hyderabad",
+               "chennai", "kolkata", "ahmedabad", "surat", "vapi", "indore",
+               "bhopal", "nagpur", "lucknow", "kanpur", "patna", "ranchi",
+               "raipur", "ludhiana", "chandigarh", "amritsar", "agra",
+               "varanasi", "kota", "udaipur", "jodhpur", "ajmer", "alwar",
+               "bikaner", "sikar", "bhilwara", "guwahati", "kochi", "cochin",
+               "coimbatore", "vizag", "visakhapatnam", "goa", "dehradun",
+               "jammu", "srinagar", "shimla", "jalandhar", "meerut", "rajkot",
+               "vadodara", "baroda", "nashik", "thane", "faridabad"]
+
 _CLAIM_WORDS = ["hai na", "hai naa", "hain na", "right?", "correct?", "pakka", "pukka",
                 "guarantee", "guaranteed", "sure?", "confirm?", "to nahi", "toh nahi",
                 "nahi hogi", "nahi hoga", "nahi hota", "9h", "10h", "lifetime",
@@ -107,6 +122,8 @@ def is_content_free(comment_text: str, seen: "brain.dialogue.Perception") -> boo
     norm = seen.norm.strip()
     if not norm or not re.search("[a-z]", norm):
         return True                                  # emoji / punctuation only
+    if contains_any(norm, _CITY_WORDS) and len(norm.split()) <= 3:
+        return False                                 # "Bangalore" - answer it
     has_question = "?" in comment_text or seen.has_followup or bool(seen.asks)
     names_anything = seen.names_topic or bool(seen.model) or seen.is_side \
         or seen.intent not in (Intent.UNKNOWN, Intent.OTHER)
@@ -205,6 +222,20 @@ def public_reply(a: "brain.Answer", comment_text: str) -> str:
                 if hin else
                 "Hi! Used cars start from Rs 99,000 - DM us for the current options.")
 
+    # 4b. "send the link" - there is no website, and saying so is the answer.
+    elif contains_any(norm, _LINK_WORDS):
+        text = ("Hi! Hamari koi website nahi hai - DM karein, team saari details "
+                "wahin share kar degi." if hin else
+                "Hi! We don't have a website - DM us and our team will share all "
+                "the details there.")
+
+    # 4c. A bare city name: say where we are, promise no delivery.
+    elif contains_any(norm, _CITY_WORDS) and len(norm.split()) <= 3:
+        text = (f"Hi! Hum {BUSINESS['address_short']} (Jaipur) mein hain 📍 DM karein - "
+                "team aapke shehar ke liye bata degi kya ho sakta hai." if hin else
+                f"Hi! We're in Jaipur at {BUSINESS['address_short']} 📍 DM us and our "
+                "team will tell you what's possible for your city.")
+
     # 5. PPF-or-ceramic: we do both, the team advises.
     elif both and intent in (Intent.SERVICE_COMPARISON, Intent.RECOMMENDATION,
                              Intent.SERVICE_INQUIRY, Intent.OTHER, Intent.UNKNOWN):
@@ -264,6 +295,31 @@ def public_reply(a: "brain.Answer", comment_text: str) -> str:
 # Openers that mean the same thing. Rotating them stops a run of comments
 # from carrying byte-identical text, which is what Instagram's spam checks
 # look for. Meaning never changes - only the greeting.
+# The same sentence posted 16 times is what Instagram reads as spam. These
+# say the same thing in different words; the greeting rotates on top.
+BODY_VARIANTS = {
+    "We're at Opp. ISKCON Temple, Dholai, Jaipur 📍 - DM us for the map link.": (
+        "We're at Opp. ISKCON Temple, Dholai, Jaipur 📍 - DM us for the map link.",
+        "You'll find us opposite ISKCON Temple, Dholai, Jaipur 📍 DM us for the map.",
+        "Our workshop is at Dholai, Jaipur, opposite ISKCON Temple 📍 DM us for directions.",
+    ),
+    "Please DM us what you need for your car - we'll help right away.": (
+        "Please DM us what you need for your car - we'll help right away.",
+        "DM us your car model and what you're after - our team will take it from there.",
+        "Tell us in a DM what you need for it and our team will help you out.",
+    ),
+    "Please DM us what you need - our team will confirm the exact price there.": (
+        "Please DM us what you need - our team will confirm the exact price there.",
+        "DM us the details and our team will share the exact price with you.",
+        "Send us a DM with what you need - the team will confirm the price there.",
+    ),
+    "Apna car model aur requirement DM karein - price team wahin confirm karegi.": (
+        "Apna car model aur requirement DM karein - price team wahin confirm karegi.",
+        "DM karein apni car aur requirement - team wahin exact price bata degi.",
+        "Car model DM kar dijiye - team aapko price wahin confirm kar degi.",
+    ),
+}
+
 _OPENERS_EN = ("Hi! ", "Hello! ", "Hey! ", "")
 _OPENERS_HI = ("Hi! ", "Namaste! ", "Hello! ", "")
 _ALL_OPENERS = ("Hi! ", "Hello! ", "Hey! ", "Namaste! ")
@@ -287,19 +343,22 @@ def vary_public_reply(text: str, comment_id: str = "", hin: bool = False) -> str
     body = _strip_opener(" ".join((text or "").split()))
     if not body:
         return text
+    bodies = BODY_VARIANTS.get(body, (body,))
     openers = _OPENERS_HI if hin else _OPENERS_EN
-    start = (sum(ord(c) for c in str(comment_id)) % len(openers)) if comment_id else 0
+    seed = (sum(ord(c) for c in str(comment_id)) if comment_id else 0)
     window = config.COMMENT_REPEAT_WINDOW_HOURS
     first = ""
-    for step in range(len(openers)):
-        candidate = _cap_first(openers[(start + step) % len(openers)] + body)
-        if step == 0:
-            first = candidate
-        try:
-            if not db.public_reply_used_recently(candidate, window):
+    for b_step in range(len(bodies)):
+        this_body = bodies[(seed + b_step) % len(bodies)]
+        for step in range(len(openers)):
+            candidate = _cap_first(openers[(seed + step) % len(openers)] + this_body)
+            if not first:
+                first = candidate
+            try:
+                if not db.public_reply_used_recently(candidate, window):
+                    return candidate
+            except Exception:                  # a database hiccup must not block a reply
                 return candidate
-        except Exception:                      # a database hiccup must not block a reply
-            return candidate
     return first
 
 
@@ -322,8 +381,37 @@ def _tidy(text: str) -> str:
     return text
 
 
+def seed_topic_from_reel(key: str, topic_hint: Optional[Dict[str, Any]],
+                         seen: "brain.dialogue.Perception") -> bool:
+    """Give a brand-new comment thread the Reel's own subject.
+
+    "Swift 2020" under a floor-mat Reel means mats for a Swift. Only applied
+    when the comment names no topic of its own and the thread has no history,
+    so it can never override what the customer actually said.
+    """
+    if not topic_hint or seen.names_topic:
+        return False
+    service, product = topic_hint.get("service"), topic_hint.get("product")
+    if not (service or product):
+        return False
+    try:
+        conversation_id = db.get_or_create_conversation(key)
+        if db.get_state(conversation_id):
+            return False                       # a real conversation already
+        db.set_state(conversation_id, {
+            "intent": "ACCESSORY_INQUIRY" if product else "SERVICE_INQUIRY",
+            "service": service, "product": product,
+            "original_message": (topic_hint.get("caption") or "")[:200],
+            "facts": {}, "from_reel": True})
+        return True
+    except Exception as error:                 # never block a reply over this
+        print(f"[COMMENT] could not seed the Reel topic: {error!r}")
+        return False
+
+
 def handle_comment(comment_id: str, commenter_id: str, media_id: str,
-                   text: str, use_ai: bool = True) -> Dict[str, Any]:
+                   text: str, use_ai: bool = True,
+                   topic_hint: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Answer one comment with the existing brain and shape the two replies.
 
     Returns {"answer": Answer|None, "public": str, "private": str,
@@ -338,6 +426,7 @@ def handle_comment(comment_id: str, commenter_id: str, media_id: str,
         print(f"[COMMENT] content-free comment on {media_id} - no reply.")
         return {"answer": None, "public": "", "private": "", "conversation": key,
                 "comment_id": comment_id, "skipped": True}
+    seed_topic_from_reel(key, topic_hint, seen)
     answer = brain.process(key, text, use_ai=use_ai)
     hin = (answer.frame.language if answer.frame is not None else None) == "hi"
     private = answer.reply                 # the full DM-style answer (the brain

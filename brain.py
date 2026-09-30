@@ -2756,18 +2756,33 @@ def answer(message: str, conversation_id: Optional[str] = None,
 # millisecond instead of the ~65 seconds the owner measured.
 
 
+# Words that are Hindi and nothing else. One of these in a SHORT comment is
+# enough: "Ertiga ka price" and "S presso ka rate" were answered in English
+# because "ka" was missing from the list entirely and one marker was never
+# enough (live, September 2026).
+_HI_STRONG = ["ka", "ki", "ke", "kya", "hai", "hain", "chahiye", "chaiye",
+              "kitna", "kitne", "kitni", "milega", "milegi", "mil", "jayega",
+              "jayegi", "hoga", "hogi", "karwana", "karwani", "karna", "karni",
+              "batao", "batavo", "bata", "bhai", "nahi", "nhi", "karein",
+              "karo", "lijiye", "dijiye", "aapka", "aapki", "mera", "meri",
+              "krna", "kar", "konsa", "kaunsa", "kaise", "acha", "achha",
+              "theek", "thik", "haan", "bhejo", "hoon", "aap", "hum"]
+_HI_WEAK = ["aur", "mein", "me", "ko", "bhi", "sakta", "sakti", "dena", "do",
+            "lena", "wala", "wale", "han", "kal", "aaj", "baje", "subah",
+            "shaam", "abhi", "kab", "ji", "ke liye", "h"]
+
+
 def _hinglish(norm: str) -> bool:
-    """Rough check for a Hinglish/Hindi message, to mirror the customer."""
-    markers = ["hai", "hain", "chahiye", "karwana", "karwani", "karna",
-               "karni", "kitne", "kitna", "bhai", "mera", "meri", "aur",
-               "kya", "hoga", "milega", "batao", "krna", "ke liye", "ke",
-               "ki", "mein", "me", "ko", "achha", "acha", "bhi", "sakta",
-               "sakti", "dena", "do", "lena", "karein", "wala", "wale",
-               "haan", "han", "nahi", "nhi", "kal", "aaj", "baje", "subah",
-               "shaam", "abhi", "kab", "kaise", "konsa", "kaunsa", "theek",
-               "thik", "bhejo", "bata", "batao", "karo", "lijiye", "dijiye",
-               "hoon", "hu", "aap", "aapki", "aapka", "hum", "ji"]
-    return sum(1 for m in markers if re.search(r"\b" + m + r"\b", norm)) >= 2
+    """Rough check for a Hinglish/Hindi message, to mirror the customer.
+
+    Two markers of any kind, OR a single unmistakably Hindi word in a short
+    comment - a three-word comment rarely has room for two.
+    """
+    strong = sum(1 for m in _HI_STRONG if re.search(r"\b" + m + r"\b", norm))
+    weak = sum(1 for m in _HI_WEAK if re.search(r"\b" + m + r"\b", norm))
+    if strong + weak >= 2:
+        return True
+    return strong >= 1 and len(norm.split()) <= 6
 
 
 def _cta(hinglish: bool) -> str:
