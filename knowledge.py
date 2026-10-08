@@ -146,6 +146,34 @@ BUSINESS: Dict[str, Any] = {
 
 PHONE: str = BUSINESS["phone"]
 
+# Cities customers write in from. Used by the DM brain and by the public
+# comment replies, so both answer "Bangalore?" the same way. Jaipur is
+# deliberately absent - that is where we are.
+OTHER_CITIES: Dict[str, str] = {
+    "navi mumbai": "Navi Mumbai", "new delhi": "New Delhi",
+    "bangalore": "Bangalore", "bengaluru": "Bengaluru", "pune": "Pune",
+    "mumbai": "Mumbai", "bombay": "Mumbai", "delhi": "Delhi",
+    "noida": "Noida", "gurgaon": "Gurgaon", "gurugram": "Gurugram",
+    "hyderabad": "Hyderabad", "chennai": "Chennai", "kolkata": "Kolkata",
+    "ahmedabad": "Ahmedabad", "surat": "Surat", "vapi": "Vapi",
+    "indore": "Indore", "bhopal": "Bhopal", "nagpur": "Nagpur",
+    "lucknow": "Lucknow", "kanpur": "Kanpur", "patna": "Patna",
+    "ranchi": "Ranchi", "raipur": "Raipur", "ludhiana": "Ludhiana",
+    "chandigarh": "Chandigarh", "amritsar": "Amritsar", "agra": "Agra",
+    "varanasi": "Varanasi", "kota": "Kota", "udaipur": "Udaipur",
+    "jodhpur": "Jodhpur", "ajmer": "Ajmer", "alwar": "Alwar",
+    "bikaner": "Bikaner", "sikar": "Sikar", "bhilwara": "Bhilwara",
+    "guwahati": "Guwahati", "kochi": "Kochi", "cochin": "Kochi",
+    "coimbatore": "Coimbatore", "vizag": "Vizag",
+    "visakhapatnam": "Visakhapatnam", "goa": "Goa", "dehradun": "Dehradun",
+    "jammu": "Jammu", "srinagar": "Srinagar", "shimla": "Shimla",
+    "jalandhar": "Jalandhar", "meerut": "Meerut", "rajkot": "Rajkot",
+    "vadodara": "Vadodara", "baroda": "Vadodara", "nashik": "Nashik",
+    "thane": "Thane", "faridabad": "Faridabad",
+}
+# Longest first, so "Navi Mumbai" is never read as "Mumbai".
+CITY_ALIASES_SORTED = sorted(OTHER_CITIES, key=len, reverse=True)
+
 
 # ===========================================================================
 # MANAGER DATA - the future knowledge slot
@@ -263,7 +291,7 @@ APPROVED_FAQS: List[Dict[str, Any]] = [
          Service.LOCATION, Intent.LOCATION),
     _faq(3, "send map location bro",
          "Car Trends Car Mall is opposite ISKCON Temple, Dholai, Jaipur. "
-         "Comment 'Location' on our reel for the exact map link!",
+         "Google Maps: " + BUSINESS["maps_link"],
          "Location/Contact", "Intent: Location/Contact",
          Service.LOCATION, Intent.LOCATION),
     _faq(4, "whats ur mobile no.",
@@ -1015,6 +1043,13 @@ PRODUCTS: Dict[str, Dict[str, Any]] = {
     # "parcel" was even auto-corrected to "price" - so the customer was asked
     # "which service or product is it for?" twice. No approved answer says we
     # stock it, so it is understood but never claimed: the team confirms.
+    "side_mirror": {
+        "label": "side mirrors",
+        "detail": None,
+        "benefit": None,
+        "category": Service.ACCESSORIES,
+        "verified": False, "faqs": [],
+    },
     "parcel_tray": {
         "label": "parcel tray",
         "detail": None, "benefit": None,
@@ -1042,6 +1077,15 @@ PRODUCT_ALIASES: Dict[str, str] = {
     "normal mat": "gfx_normal", "normal mats": "gfx_normal",
     "traditional mat": "gfx_normal", "traditional mats": "gfx_normal",
     "simple mat": "gfx_normal",
+
+    # Live, 4 Oct 2026: "Duster 2018 auto fold mirror available hai" was
+    # answered with the timing-belt answer. Nothing approved covers mirrors,
+    # so it is recognised and handed to the team like any unverified item.
+    "side mirror": "side_mirror", "side mirrors": "side_mirror",
+    "mirror": "side_mirror", "mirrors": "side_mirror",
+    "orvm": "side_mirror", "auto fold mirror": "side_mirror",
+    "auto folding mirror": "side_mirror", "folding mirror": "side_mirror",
+    "auto fold mirrors": "side_mirror", "rear view mirror": "side_mirror",
 
     "parcel tray": "parcel_tray", "parcel trays": "parcel_tray",
     "parcel shelf": "parcel_tray", "parcel": "parcel_tray",

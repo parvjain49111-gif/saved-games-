@@ -57,16 +57,8 @@ _FINANCE_WORDS = ["emi", "finance", "loan", "downpayment", "down payment", "inst
 _LINK_WORDS = ["link", "website", "site", "web page", "webpage", "url",
                "online order", "online site"]
 # A bare city name is a real question ("do you serve my city?"), not noise.
-_CITY_WORDS = ["bangalore", "bengaluru", "pune", "mumbai", "bombay", "delhi",
-               "new delhi", "noida", "gurgaon", "gurugram", "hyderabad",
-               "chennai", "kolkata", "ahmedabad", "surat", "vapi", "indore",
-               "bhopal", "nagpur", "lucknow", "kanpur", "patna", "ranchi",
-               "raipur", "ludhiana", "chandigarh", "amritsar", "agra",
-               "varanasi", "kota", "udaipur", "jodhpur", "ajmer", "alwar",
-               "bikaner", "sikar", "bhilwara", "guwahati", "kochi", "cochin",
-               "coimbatore", "vizag", "visakhapatnam", "goa", "dehradun",
-               "jammu", "srinagar", "shimla", "jalandhar", "meerut", "rajkot",
-               "vadodara", "baroda", "nashik", "thane", "faridabad"]
+# The same list the DM brain answers "Deliverable in ahmedabad?" from.
+_CITY_WORDS = list(kb.OTHER_CITIES)
 
 _CLAIM_WORDS = ["hai na", "hai naa", "hain na", "right?", "correct?", "pakka", "pukka",
                 "guarantee", "guaranteed", "sure?", "confirm?", "to nahi", "toh nahi",

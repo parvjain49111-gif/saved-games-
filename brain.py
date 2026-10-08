@@ -71,6 +71,12 @@ SYNONYMS: Dict[str, str] = {
     "pff": "ppf", "ppff": "ppf",
     # --- price words ---
     "prce": "price", "pric": "price", "prise": "price", "rt": "rate",
+    "bato": "batao", "btao": "batao", "batado": "batao",
+    "ret": "rate", "rait": "rate", "reat": "rate", "pricem": "price",
+    "prize": "price", "pric": "price",
+    "picture": "photo", "pictures": "photo", "photos": "photo",
+    "pitcher": "photo", "pitchers": "photo", "pic": "photo",
+    "pics": "photo", "image": "photo", "images": "photo", "img": "photo",
     "kimat": "price", "keemat": "price", "daam": "price", "rate": "price",
     "cost": "price", "charges": "price", "mrp": "price",
     "quotation": "price", "validity": "valid",
@@ -150,7 +156,28 @@ PHRASE_SYNONYMS: Dict[str, str] = {
     "floor mets": "floor mats", "floor met": "floor mat",
     "gfx mets": "gfx mats", "gfx met": "gfx mat",
     "7d mets": "7d mats", "7d met": "7d mat",
+    # Car names as customers typed them in live DMs.
+    "victories": "victoris", "victoras": "victoris", "victorious": "victoris",
+    "desizer": "dzire", "dezier": "dzire", "maruti desire": "maruti dzire",
+    "belaro": "bolero", "balero": "bolero", "i10 grand": "grand i10",
 }
+
+# "Mata", "Matte", "matt", "matting" all mean the floor mat - except where
+# the message is about a matte FINISH, which is paint work, not a mat.
+_MAT_SPELLINGS = re.compile(
+    r"\b(mata|maata|mataa|matas|matta|mattas|matte|mattes|matt|matts"
+    r"|matting|maits)\b")
+_MAT_NOT_A_MAT = ["paint", "painting", "finish", "wrap", "wrapping", "colour",
+                  "color", "shade", "ppf", "look", "black", "white", "grey",
+                  "gray"]
+
+
+def _fix_mat_spelling(text: str) -> str:
+    """"creta mata" -> "creta mat". "matte black finish" is left alone."""
+    if _MAT_SPELLINGS.search(text) and not any(
+            re.search(r"\b" + w + r"\b", text) for w in _MAT_NOT_A_MAT):
+        text = _MAT_SPELLINGS.sub("mat", text)
+    return text
 
 _PUNCT = re.compile(r"[^\w\s]", re.UNICODE)
 _SPACES = re.compile(r"\s+")
@@ -175,6 +202,7 @@ def normalise(text: str) -> str:
     for phrase, canon in PHRASE_SYNONYMS.items():
         if phrase in text:
             text = re.sub(r"\b" + re.escape(phrase) + r"\b", canon, text)
+    text = _fix_mat_spelling(text)
     # Synonyms run before AND after the fuzzy step: a corrected spelling
     # ("scraches" -> "scratches") must still map to its canonical form.
     words = [SYNONYMS.get(f, f) for f in
@@ -229,6 +257,17 @@ COMMON_WORDS = [
     "innovation", "virtue", "breeze", "fortune", "fortunate", "crete", "sonnet",
     "nexus", "pole", "poll", "polio", "altar", "wagon", "pool", "polar",
     "andar", "bahar", "upar", "neeche", "peeche", "aage", "saath", "bina",
+    # "matte black paint" came out as "matte back paint": colours and the
+    # words customers describe a variant with were being "corrected".
+    "black", "white", "grey", "gray", "silver", "blue", "red", "green",
+    "cng", "petrol", "diesel", "automatic", "manual", "variant", "pure",
+    "plus", "mirror", "glass", "fold", "folding", "bucket", "tray",
+    # "picture dikhao" was corrected to "puncture dikhao" and answered
+    # about puncture repair (live, 28 Sep 2026).
+    "share", "shares", "shared", "sharing", "like", "likes", "comment",
+    "comments", "follow", "followers", "story", "stories", "page", "pages",
+    "photo", "picture", "pictures", "pics", "image", "images", "video",
+    "videos", "catalogue", "catalog", "dikhao", "dikha", "dekhna", "dekhni",
 ]
 
 
@@ -863,6 +902,9 @@ CAR_MODELS = [
     "grand i10 nios", "i10 nios", "nios",
     # A number that is part of the car's name - "Alto 800" was read as Rs 800.
     "alto 800", "alto k10", "xuv500", "xuv400",
+    # Live DMs, Sep-Oct 2026: two owners asked for Victoris mats and were
+    # asked "which car is it for?" twice, a Sierra EV owner once.
+    "victoris", "sierra", "bolero neo", "victoris cng",
 ]
 
 # Make names, so "Skoda octavia" and a bare "Skoda" both register.
@@ -892,6 +934,8 @@ CAR_BRANDS = {
     "alto 800": "Maruti", "alto k10": "Maruti",
     "xuv500": "Mahindra", "xuv400": "Mahindra", "xuv700": "Mahindra",
     "xuv300": "Mahindra",
+    "victoris": "Maruti", "victoris cng": "Maruti", "sierra": "Tata",
+    "bolero neo": "Mahindra",
 }
 
 _YEAR = re.compile(r"\b(19[89]\d|20[0-4]\d)\b")
@@ -932,7 +976,9 @@ _MODEL_DISPLAY = {"i10": "i10", "i20": "i20", "bmw": "BMW", "xuv700": "XUV700",
                   "nios": "Grand i10 Nios", "i10 nios": "Grand i10 Nios",
                   "grand i10 nios": "Grand i10 Nios", "grand i10": "Grand i10",
                   "alto 800": "Alto 800", "alto k10": "Alto K10",
-                  "xuv500": "XUV500", "xuv400": "XUV400"}
+                  "xuv500": "XUV500", "xuv400": "XUV400",
+                  "victoris": "Victoris", "victoris cng": "Victoris",
+                  "sierra": "Sierra", "bolero neo": "Bolero Neo"}
 
 
 def extract_car(norm: str) -> Tuple[Optional[str], Optional[str], Optional[str]]:
@@ -1237,6 +1283,27 @@ def faq_is_eligible(faq: Dict[str, Any], intent: str,
     return True
 
 
+# Specific components. Nothing approved covers most of them, and the FAQ
+# matcher used to hand out the nearest one it had: "auto fold mirror
+# available hai" came back with timing belts, water pumps and clutch plates.
+PART_WORDS = [
+    "timing belt", "water pump", "clutch plate", "clutch wire", "clutch",
+    "brake pad", "brake shoe", "radiator", "alternator", "starter motor",
+    "compressor", "shock absorber", "shocker", "suspension", "silencer",
+    "exhaust", "gearbox", "gear box", "fuel pump", "air filter",
+    "oil filter", "ac filter", "spark plug", "battery", "horn", "orvm",
+    "side mirror", "mirror", "headlight", "head light", "tail light",
+    "taillight", "indicator", "windshield", "wind shield", "door handle",
+    "window regulator", "wheel bearing", "axle", "steering rack",
+]
+
+
+def parts_named(text: str) -> set:
+    """Which specific components this text names."""
+    return {part for part in PART_WORDS
+            if re.search(r"\b" + re.escape(part) + r"\b", text)}
+
+
 def match_faq(message: str, service: Optional[str], intent: str,
               customer_car: Optional[str] = None,
               customer_product: Optional[str] = None,
@@ -1257,6 +1324,7 @@ def match_faq(message: str, service: Optional[str], intent: str,
         _singular(w) for w in negated_terms(msg_norm)}
     # "scorpio ka full paint job" must not pull the alloy-painting answer:
     # an FAQ about alloys or calipers needs the customer to have named them.
+    msg_parts = parts_named(msg_norm)
     wheels_asked = customer_product == "alloy_wheels" or contains_any(
         msg_norm, ["alloy", "alloys", "rim", "rims", "caliper", "calipers",
                    "wheel", "wheels"])
@@ -1268,6 +1336,11 @@ def match_faq(message: str, service: Optional[str], intent: str,
         if not wheels_asked and contains_any((faq["question"] or "").lower(),
                                              ["alloy", "caliper"]):
             continue
+        # The customer named a part, this FAQ is about a DIFFERENT part.
+        if msg_parts:
+            faq_parts = parts_named(normalise(faq["question"] or ""))
+            if faq_parts and not (faq_parts & msg_parts):
+                continue
         s = score_faq(faq, faq_tokens, msg_tokens, service, intent)
         if s > best_score:
             best, best_score = faq, s
@@ -1839,7 +1912,63 @@ def answer(message: str, conversation_id: Optional[str] = None,
 
     conversation_id enables context and knowledge-gap recording. Passing
     None makes this a pure function, which is what the test suite uses.
+
+    The decision is made by _answer_core(); everything that has to be true
+    of EVERY reply, whichever branch produced it, is applied here.
     """
+    a = _answer_core(message, conversation_id, use_ai)
+    norm = normalise(message)
+    hin = _hinglish(norm)
+
+    a.reply = add_side_answers(a.reply, norm, hin,
+                               bool(a.service or a.product), a)
+    a.reply = trim_repeated_handover(a.reply)
+    return a
+
+
+def add_side_answers(reply: str, norm: str, hin: bool, has_topic: bool,
+                     a: Optional["Answer"] = None) -> str:
+    """Answer the parts of the message the main reply did not cover.
+
+    Delivery to another city, and a request for photos. Called again after
+    a reply is replaced, so a handover can never swallow them.
+    """
+    # A question we never answered: "Deliverable in ahmedabad ?" - asked
+    # alongside the price, so the price answer stays and this is added.
+    city = other_city_in(norm)
+    if (asks_delivery(norm) or (city and len(norm.split()) <= 6)) \
+            and not _already_covers_delivery(reply) \
+            and not is_business_pitch(norm, len(norm.split())):
+        if has_topic or reply_says_something(reply):
+            with_address = "jaipur" not in reply.lower()
+            reply = f"{reply.rstrip()} {delivery_note(city, hin, with_address)}"
+        else:
+            reply = delivery_reply(city, hin)
+            if a is not None:
+                a.source, a.escalated = "ESCALATION", True
+                a.resolution = Resolution.ESCALATED
+                a.covered = False
+        if a is not None and not a.gap_topic:
+            a.gap_topic = ("Delivery outside Jaipur"
+                           + (f" - {city}" if city else ""))
+
+    # "Price & pitcher", "photo dikhao" - a photo cannot be sent from here,
+    # so say where it can.
+    if asks_for_photo(norm) and "photo" not in reply.lower() \
+            and not is_business_pitch(norm, len(norm.split())):
+        if has_topic or reply_says_something(reply):
+            reply = f"{reply.rstrip()} {photo_note(hin)}"
+        else:
+            reply = photo_note(hin)
+            if a is not None:
+                a.source = "RULE"
+                a.resolution = Resolution.ANSWERED
+    return reply
+
+
+def _answer_core(message: str, conversation_id: Optional[str] = None,
+                 use_ai: bool = True) -> Answer:
+    """Choose the reply. Called only by answer()."""
     norm = normalise(message)
     ctx = build_context(conversation_id)
 
@@ -2026,10 +2155,20 @@ def answer(message: str, conversation_id: Optional[str] = None,
             base.resolution = Resolution.BOOKING_REQUESTED
         return base
 
+    # ---- Not a customer at all -------------------------------------------
+    if is_business_pitch(norm, p.n_tokens):
+        base.reply = pitch_reply(_hinglish(norm))
+        base.source = "RULE"
+        base.confidence, base.covered = 0.8, True
+        base.resolution = Resolution.ANSWERED
+        base.service = base.product = None
+        base.intent = Intent.OTHER
+        return base
+
     # ---- "Thanks" closes the conversation --------------------------------
     # Never restate the answer they are thanking us for. The topic is kept in
     # the state, so a later "and the price?" still knows what they mean.
-    if p.is_thanks:
+    if p.is_thanks or _closing_ack(p, norm, state):
         # The conversation's language, not this one word's: "shukriya" on its
         # own has no language of its own, and a Hindi thank-you must not get
         # an English sign-off.
@@ -2403,27 +2542,56 @@ def answer(message: str, conversation_id: Optional[str] = None,
             base.gap_topic = "Product not in knowledge base - Android infotainment system"
         return base
 
-    # ---- "Which mats do you have?" - list the verified options ------------
-    if product == "floor_mats" and intent in (Intent.AVAILABILITY_REQUEST,
-                                              Intent.RECOMMENDATION):
+    # ---- Floor mats: composed, and always about THEIR car ----------------
+    # Unless an approved answer was written for this very car: FAQ 86 says
+    # "waterproof 7D Lifelong / GF Lifelong mats for Sonet", and the owner's
+    # own words beat anything assembled here. The generic mats text, which
+    # names no car at all, does not count.
+    _mats_faq_names_car = False
+    if product == "floor_mats" and model:
+        _faq, _ = match_faq(message, service, intent, model, product,
+                            asked_car=asked_model)
+        _mats_faq_names_car = bool(_faq) and model.lower() in str(
+            _faq.get("answer") or "").lower()
+    # Not just "which mats do you have?" - a price question and a bare
+    # "Nexon car mat" used to fall through to an approved FAQ answer that
+    # never mentioned the customer's car (nine customers, Sep-Oct 2026).
+    if product == "floor_mats" and not _mats_faq_names_car and intent not in (
+            Intent.WARRANTY, Intent.DURATION, Intent.BOOKING_REQUEST,
+            Intent.SERVICE_COMPARISON, Intent.PICKUP_DROP):
         hin = _hinglish(norm)
         car = _car_phrase(brand, model)
-        for_car = f" for your {car}" if car else ""
+        asks_price = intent == Intent.PRICE_INQUIRY
         if hin:
+            opening = (f"Haan 👍 aapki {car} ke liye 7D floor mats hain"
+                       if car else "Haan 👍 7D floor mats hain")
             base.reply = (
-                "Mats mein hum waterproof 7D Lifelong / GF Lifelong mats "
-                "rakhte hain, aur GFX Normal aur GFX Pro/Lifelong bhi. "
-                + (f"Aapki {car} ke liye " if car else "Aapki car ke liye ")
-                + f"exact fitting aur price team confirm kar degi - "
-                f"call/WhatsApp {PHONE}.")
+                f"{opening} - waterproof Lifelong / GF Lifelong, saath mein "
+                "GFX Normal aur GFX Pro/Lifelong. "
+                + ("Exact price team confirm karegi"
+                   if asks_price else "Exact fit aur price team confirm karegi")
+                + ("" if car else ", bas apni car bata dijiye")
+                + f" - call/WhatsApp {PHONE}.")
         else:
+            opening = (f"Yes 👍 we have 7D floor mats for your {car}"
+                       if car else "Yes 👍 we have 7D floor mats")
             base.reply = (
-                "For mats we carry waterproof 7D Lifelong / GF Lifelong mats, "
-                "plus GFX Normal and GFX Pro/Lifelong. Our team will confirm "
-                f"the exact fit and price{for_car} - call or WhatsApp {PHONE}.")
+                f"{opening} - waterproof Lifelong / GF Lifelong, plus GFX "
+                "Normal and GFX Pro/Lifelong. "
+                + ("Our team will confirm the exact price"
+                   if asks_price else
+                   "Our team will confirm the exact fit and price")
+                + ("" if car else " once you tell me your car")
+                + f" - call or WhatsApp {PHONE}.")
         base.source = "RULE"
         base.confidence, base.covered = 0.85, True
         base.resolution = Resolution.ANSWERED
+        if asks_price:
+            # We answered what we have; the figure itself needs the team, so
+            # the owner sees it on the gap list - the same way the GFX branch
+            # handles a price it cannot quote.
+            base.gap_topic = gap_topic(Service.ACCESSORIES,
+                                       Intent.PRICE_INQUIRY)
         return base
 
     # ---- GFX mats: always composed from owner-verified knowledge ----------
@@ -2766,10 +2934,35 @@ _HI_STRONG = ["ka", "ki", "ke", "kya", "hai", "hain", "chahiye", "chaiye",
               "batao", "batavo", "bata", "bhai", "nahi", "nhi", "karein",
               "karo", "lijiye", "dijiye", "aapka", "aapki", "mera", "meri",
               "krna", "kar", "konsa", "kaunsa", "kaise", "acha", "achha",
+              "dikhao", "dikha", "dijiye", "bhejiye",
               "theek", "thik", "haan", "bhejo", "hoon", "aap", "hum"]
 _HI_WEAK = ["aur", "mein", "me", "ko", "bhi", "sakta", "sakti", "dena", "do",
             "lena", "wala", "wale", "han", "kal", "aaj", "baje", "subah",
             "shaam", "abhi", "kab", "ji", "ke liye", "h"]
+
+
+# "Ok", "theek hai", "done" after we answered something. Live, 1 Oct 2026,
+# "Ok" was answered with the cold what-do-you-need menu; another "Ok" got a
+# booking push nobody asked for.
+_ACK_TOKENS = {"ok", "okay", "oky", "okk", "ok ji", "k", "kk", "theek", "thik",
+               "thike", "hai", "done", "fine", "got", "it", "sahi", "achha",
+               "acha", "hmm", "hm", "noted", "right", "ji", "bhai", "sir",
+               "great", "cool", "thanks", "thank", "thx"}
+
+
+def _closing_ack(p: "dialogue.Perception", norm: str,
+                 state: Dict[str, Any]) -> bool:
+    """A bare acknowledgement of an answer we already gave."""
+    if p.n_tokens > 3 or p.service or p.product or p.issue or p.day:
+        return False
+    if p.has_followup or p.is_cancel or p.is_complaint:
+        return False
+    if state.get("pending_slot"):
+        return False                       # we asked something; this answers it
+    if not (state.get("intent") or state.get("service") or state.get("product")):
+        return False                       # nothing has been answered yet
+    words = norm.split()
+    return bool(words) and all(w in _ACK_TOKENS for w in words)
 
 
 def _hinglish(norm: str) -> bool:
@@ -2809,6 +3002,204 @@ def _car_phrase(brand: Optional[str], model: Optional[str]) -> Optional[str]:
 
 def _bullets(items: List[str]) -> str:
     return "\n".join("• " + i for i in items)
+
+
+# ---------------------------------------------------------------------------
+# MESSAGES THAT ARE NOT CUSTOMER ENQUIRIES
+# ---------------------------------------------------------------------------
+# Supplier pitches, affiliate proposals and "like share and comment" blasts.
+# Live, last 14 days, a car-cover factory in Ningbo was answered with "I'd
+# rather check than guess on tyres" and an affiliate proposal with our
+# engine-oil range. These are not customers; they get one neutral line and
+# no pitch.
+_PITCH_PHRASES = [
+    "affiliate program", "affiliate marketing", "collaboration proposal",
+    "collaboration opportunity", "collab opportunity", "brand collaboration",
+    "distributorship", "distributor for", "distributors for", "dealership for",
+    "bulk order", "bulk orders", "wholesale price", "wholesale rate",
+    "factory direct", "factory-direct", "trial order", "trial orders",
+    "oem", "moq", "co ltd", "co., ltd", "pvt ltd looking",
+    "we specialize", "we specialise", "our catalog", "our catalogue",
+    "send you our catalog", "our quotation", "looking for reliable partners",
+    "promote your", "sponsored post", "paid promotion", "barter collab",
+    "like share and comment", "like and share", "registration link",
+    "subscribe my", "subscribe to my", "follow back", "dm for promotion",
+    "increase your followers", "grow your page", "seo service",
+    "website development", "web development service", "lead generation",
+    # Another business's own auto-reply, bouncing back at us. Live, 7 Oct
+    # 2026, one of them was answered with our opening hours.
+    "thanks for contacting", "thank you for contacting",
+    "thanks for messaging us", "thank you for messaging us",
+    "our team will get back to you", "we will get back to you shortly",
+    "please share your name",
+]
+_PITCH_WORDS = ["supplier", "manufacturer", "exporter", "importer",
+                "distributor", "wholesaler", "affiliate", "collaboration",
+                "sponsorship", "catalog", "catalogue", "quotation",
+                "partnership", "promotion", "influencer", "reseller"]
+
+
+def is_business_pitch(norm: str, n_tokens: int) -> bool:
+    """A pitch at the business, not a question from a customer."""
+    if contains_any(norm, _PITCH_PHRASES):
+        return True
+    hits = sum(1 for w in _PITCH_WORDS
+               if re.search(r"\b" + w + r"\b", norm))
+    return hits >= 2 and n_tokens >= 25
+
+
+def pitch_reply(hinglish: bool) -> str:
+    if hinglish:
+        return ("Message ke liye dhanyavad \U0001f44d Business ya "
+                f"collaboration ki baat ke liye {PHONE} par call ya WhatsApp "
+                "karein - hamari team hi ye dekhti hai.")
+    return ("Thanks for reaching out \U0001f44d For business, supply or "
+            f"collaboration enquiries please call or WhatsApp {PHONE} - our "
+            "team handles those directly.")
+
+
+# ---------------------------------------------------------------------------
+# DELIVERY AND OTHER CITIES
+# ---------------------------------------------------------------------------
+_DELIVERY_WORDS = ["deliver", "delivery", "deliverable", "delivarable",
+                   "deliverd", "courier", "shipping", "ship it", "dispatch",
+                   "despatch", "home delivery", "cash on delivery", "cod",
+                   "online order", "outstation", "bhej sakte", "bhej skte",
+                   "bhej denge", "bhejte ho", "bhejwa", "bhej do",
+                   "send to", "send it to", "send karoge", "send kar sakte"]
+
+
+_PHOTO_WORDS = ["photo", "photo bhej", "photo dikhao", "photo dikha",
+                "photo chahiye", "photo send", "send photo", "share photo",
+                "video", "catalogue", "catalog"]
+
+
+def asks_for_photo(norm: str) -> bool:
+    """Asking to be SHOWN something, which cannot be done from here."""
+    return contains_any(norm, _PHOTO_WORDS)
+
+
+def photo_note(hinglish: bool) -> str:
+    if hinglish:
+        return f"Photo ke liye {PHONE} par WhatsApp karein - team wahin help kar degi."
+    return f"For photos, WhatsApp {PHONE} and ask our team there."
+
+
+def asks_delivery(norm: str) -> bool:
+    """Is the customer asking us to send it to them?"""
+    if contains_any(norm, ["parcel tray", "parcel shelf"]):
+        return False                       # the product, not a parcel
+    return contains_any(norm, _DELIVERY_WORDS)
+
+
+def other_city_in(norm: str) -> Optional[str]:
+    """The city the customer named, when it is not ours."""
+    for alias in kb.CITY_ALIASES_SORTED:
+        if re.search(r"\b" + re.escape(alias) + r"\b", norm):
+            return kb.OTHER_CITIES[alias]
+    return None
+
+
+def delivery_note(city: Optional[str], hinglish: bool,
+                  with_address: bool = True) -> str:
+    """Where we are, and that only the team can confirm sending it."""
+    target = city or "aapke shehar" if hinglish else (city or "your city")
+    where = kb.BUSINESS["address_short"]
+    if hinglish:
+        lead = f"Hum {where} mein hain - " if with_address else ""
+        return f"{lead}{target} bhej sakte hain ya nahi, ye team confirm karegi."
+    lead = f"We're at {where} - " if with_address else ""
+    return (f"{lead}whether we can send it to {target} is something our team "
+            "will confirm.")
+
+
+def delivery_reply(city: Optional[str], hinglish: bool) -> str:
+    """A standalone answer, when delivery is the whole question."""
+    return f"{delivery_note(city, hinglish)} Call/WhatsApp: {PHONE}"
+
+
+def _already_covers_delivery(reply: str) -> bool:
+    low = reply.lower()
+    return "jaipur" in low and any(
+        w in low for w in ("send", "deliver", "courier", "bhej"))
+
+
+_TEAM_SENTENCE = re.compile(
+    r"team (?:will|can)\b|our team|hamari team|team confirm|confirm kar",
+    re.I)
+
+
+# Full stops that do NOT end a sentence. Our own address contains two of
+# them ("Opp. ISKCON Temple, Kharbas Cir Rd, ..."), and splitting there left
+# a reply ending in "We're at Opp."
+_ABBREVIATIONS = ("Opp.", "Rd.", "Cir.", "No.", "Rs.", "Mr.", "Mrs.", "Ms.",
+                  "Dr.", "St.", "Pvt.", "Ltd.", "approx.", "etc.", "a.m.",
+                  "p.m.", "No.")
+_MASK = "\u0001"
+
+
+def _sentences(text: str) -> list:
+    """Split into sentences without breaking abbreviations."""
+    masked = text or ""
+    for i, abbrev in enumerate(_ABBREVIATIONS):
+        masked = masked.replace(abbrev, abbrev[:-1] + _MASK)
+    parts = re.split(r"(?<=[.!?])\s+", masked)
+    return [part.replace(_MASK, ".") for part in parts if part.strip()]
+
+
+# Everything a pure handover sentence is made of. A sentence with nothing
+# left after these (and the car's own name) are removed carries no
+# information, so a second one of them is pure repetition.
+_HANDOVER_VOCAB = {
+    "our", "my", "we", "will", "can", "team", "teams", "confirm", "confirmed",
+    "the", "a", "an", "exact", "price", "prices", "pricing", "option",
+    "options", "fit", "fitting", "for", "your", "you", "yours", "car",
+    "cars", "model", "models", "variant", "and", "what", "suits", "suit",
+    "straight", "away", "on", "call", "calls", "whatsapp", "or", "us", "to",
+    "please", "right", "it", "this", "that", "them", "there", "so",
+    "depends", "number", "share", "tell", "get", "back", "help", "directly",
+    "available", "availability", "assessment", "quote", "with", "of", "in",
+    "is", "are", "be", "do", "does", "at", "from", "more", "anything",
+    "ke", "liye", "ki", "ka", "kar", "karegi", "karenge", "degi", "dega",
+    "par", "ya", "lijiye", "lo", "karein", "hum", "hamari", "aapki",
+    "aapke", "aapko", "aap", "main", "yahan", "wahin", "turant", "according",
+    "bata", "batayenge", "sakta", "sakti", "nahi", "guess", "karunga",
+    "figure", "give", "theyll", "they", "ll", "myself", "does",
+    "hai", "hain", "ho", "ye", "ki", "ya", "bhi", "turant", "milega",
+    "aur", "mein", "se", "hi", "ab", "toh", "wahin", "yahin", "bas",
+}
+
+
+def _is_pure_handover(sentence: str) -> bool:
+    """True when the sentence only hands the question to the team."""
+    if not _TEAM_SENTENCE.search(sentence):
+        return False
+    words = re.sub(r"[^\w\s]", " ", sentence.lower()).split()
+    left = [w for w in words
+            if w not in _HANDOVER_VOCAB and not w.isdigit()
+            and w not in _CAR_TOKENS and w not in CAR_MAKES]
+    return not left
+
+
+def trim_repeated_handover(reply: str) -> str:
+    """One "our team will confirm" per reply, not two.
+
+    Keeps the handover sentence that carries the phone number, so nothing
+    the customer needs is lost - only the repetition. A sentence that also
+    says something real (the address, the delivery answer) is never touched.
+    """
+    parts = _sentences(reply)
+    pure = [i for i, part in enumerate(parts) if _is_pure_handover(part)]
+    if len(pure) < 2:
+        return reply
+    keep = pure[0]                         # the first one names their car
+    kept = [part for i, part in enumerate(parts) if i not in pure or i == keep]
+    out = " ".join(kept).strip()
+    if not out:
+        return reply
+    if PHONE in reply and PHONE not in out:
+        out = f"{out} Call/WhatsApp: {PHONE}"
+    return out
 
 
 def compose_gfx_reply(product: str, brand: Optional[str], model: Optional[str],
@@ -3488,6 +3879,8 @@ _ASK_PHRASES = [
     "with your car model",           # the booking line's own ask
     "send us your requirements", "your thar's details", "which car model",
     "aapki car ka model bata", "car ka model bata",
+    "once you tell me your car", "apni car bata", "which car is it for",
+    "kaunsi car ke liye", "konsi car ke liye",
 ]
 
 
@@ -3611,6 +4004,63 @@ def process(customer_identifier: str, message: str,
 
 RECENT_REPLIES_KEPT = 3
 
+# A sentence that only routes the question to the team, or only gives the
+# phone number. A reply made only of these told the customer nothing.
+_DEFER_SENTENCE = re.compile(
+    r"team (?:will|can)\b|our team|hamari team|team hi\b|team wahin|"
+    r"team aapk|team turant|confirm kar|confirm karegi|confirm kar degi|"
+    r"price depends|depends on the car|exact price|exact option|"
+    r"rather check than guess|guess nahi|"
+    r"call/?whatsapp|whatsapp or call|call or whatsapp|call ya whatsapp|"
+    r"whatsapp ya call|whatsapp karein|6367857737", re.I)
+
+_SENTENCE_SPLIT = re.compile(r"[.!?\n]+")
+
+# The clarifying question / service menu. It moves the conversation on, but
+# it tells the customer nothing, so it must never be sent twice.
+_MENU_REPLY = re.compile(
+    r"what would you like|what do you need|which service or product|"
+    r"tell me your car model|which car is it for|kaunsi car|konsi car|"
+    r"kya chahiye|kis service ya product|car ka model", re.I)
+
+
+def reply_says_something(reply: str) -> bool:
+    """Does any sentence of this reply carry a fact, rather than a handover?
+
+    "Rs 99,000 se shuru" says something. "The exact price depends on the car
+    model and variant. Our team will confirm it - call/WhatsApp 6367857737."
+    says nothing the customer did not already know.
+    """
+    if _MENU_REPLY.search(reply or "") or _is_generic(reply or ""):
+        return False
+    for sentence in _SENTENCE_SPLIT.split(reply or ""):
+        words = [w for w in re.sub(r"[^\w\s/]", " ", sentence).split()]
+        if len(words) < 3:
+            continue                        # "Yes", "Hi", an emoji
+        if not _DEFER_SENTENCE.search(sentence):
+            return True
+    return False
+
+
+def _quote_handover(a: "Answer", hin: bool) -> str:
+    """Asked for a price twice: stop repeating, hand it over by name."""
+    thing = None
+    if a.product and a.product in kb.PRODUCTS:
+        thing = kb.PRODUCTS[a.product]["label"]
+    elif a.service:
+        thing = kb.SERVICE_LABELS.get(a.service)
+    car = _car_phrase(a.car_brand, a.car_model)
+    for_car = f" for your {car}" if car else ""
+    ke_liye = f"aapki {car} ke " if car else ""
+    if hin:
+        return (f"{(thing or 'Iska').capitalize()} ka exact price main yahan "
+                f"nahi bata sakta - team hi {ke_liye}price confirm karti hai. "
+                f"{PHONE} par WhatsApp karein ya apna number bhej dijiye, "
+                "team aapko quote kar degi.")
+    return (f"I can't quote {thing or 'this'}{for_car} myself - our team does "
+            f"the pricing. WhatsApp {PHONE} or send your number here and "
+            "they'll give you the exact figure.")
+
 
 def avoid_repeat(a: "Answer", recent: List[str]) -> str:
     """Return a reply the customer has not just been sent.
@@ -3624,26 +4074,48 @@ def avoid_repeat(a: "Answer", recent: List[str]) -> str:
     the team. A handover already sent is never swapped for anything else.
     """
     seen = {r.strip() for r in recent if r}
-    if a.reply.strip() not in seen:
+    # Not only the identical sentence: a reply that merely STARTS the same
+    # way reads as the same message ("I can't quote ... myself" twice, with
+    # a different second half).
+    openers = {(_sentences(r) or [""])[0].strip() for r in recent if r}
+    mine = (_sentences(a.reply) or [""])[0].strip()
+    if a.reply.strip() not in seen and mine not in openers:
         return a.reply
+    hin_now = (a.frame.language if a.frame is not None else None) == "hi"
+    # A real answer may be repeated - the facts have not changed - but not
+    # word for word. Saying it is a repeat is honest and reads human.
+    if a.reply.strip() in seen and reply_says_something(a.reply):
+        said = a.reply.strip()
+        varied = (f"Jaisa bataya tha - {said[0].lower()}{said[1:]}" if hin_now
+                  else f"As I mentioned - {said[0].lower()}{said[1:]}")
+        if varied.strip() not in seen:
+            return varied
     # A real answer may be given again: a customer who asks the used-car
     # starting price twice should hear Rs 99,000 twice, not a handover. Only
     # a reply that answered nothing concrete - a menu, a clarifying question,
-    # the generic "please call us" - is the robotic repeat this guards against.
-    if a.service or a.product:
+    # a pure "our team will confirm" - is the robotic repeat this guards
+    # against. Having a product attached does NOT make it an answer.
+    if reply_says_something(a.reply):
         return a.reply
     hin = (a.frame.language if a.frame is not None else None) == "hi"
     car = _car_phrase(a.car_brand, a.car_model)
     if car and a.car_year:
         car = f"{car} ({a.car_year})"
     candidates: List[str] = []
+    # Asked for the price again: name the thing and hand it over properly,
+    # instead of repeating that the price depends on the car.
+    if a.intent == Intent.PRICE_INQUIRY or (
+            a.frame is not None and a.frame.topic_intent == Intent.PRICE_INQUIRY):
+        candidates.append(_quote_handover(a, hin))
+    acknowledgement = ""
     if car and not a.service and not a.product:
-        candidates.append(
+        acknowledgement = (
             f"Noted - {car} 👍 Ab bas bata dijiye kya chahiye: PPF, ceramic, "
             "denting/painting, service ya accessories?"
             if hin else
             f"Got it - {car} 👍 Just tell me what you need for it: PPF, ceramic "
             "coating, denting/painting, service or accessories?")
+        candidates.append(acknowledgement)
     handover = (
         "Is par jo main bata sakta tha, bata diya 👍 Aage hamari team seedha "
         f"help karegi - call/WhatsApp {PHONE}"
@@ -3651,13 +4123,50 @@ def avoid_repeat(a: "Answer", recent: List[str]) -> str:
         "I've shared what I can on this 👍 For anything more, our team will "
         f"help you directly - call/WhatsApp {PHONE}.")
     candidates.append(handover)
+    candidates.append(
+        f"Aage team hi help kar paayegi - {PHONE} par call ya WhatsApp kar lijiye."
+        if hin else
+        f"Our team can take this further - please call or WhatsApp {PHONE}.")
     for text in candidates:
-        if text.strip() not in seen:
-            if text is handover:
+        first = (_sentences(text) or [""])[0].strip()
+        if text.strip() not in seen and first not in openers:
+            if text is not acknowledgement:
                 a.escalated = True
                 a.resolution = Resolution.ESCALATED
             return text
     return handover
+
+
+_PRICE_DEFLECTION = re.compile(
+    r"(?:exact |)price (?:depends|team|hi team)|price depends|"
+    r"team will confirm the exact price|team will confirm exact price|"
+    r"exact price (?:and fitting|team|our team|- call|, call)|"
+    r"confirm the exact price|price team confirm|exact price confirm",
+    re.I)
+
+
+# A message that adds nothing and only asks us to get on with it.
+_NUDGE_WORDS = {"bato", "batao", "bol", "boliye", "bataiye", "pl", "plz",
+                "please", "hello", "hlo", "hi", "sir", "bhai", "ji",
+                "reply", "jaldi", "fast", "kuch", "koi", "to", "kya",
+                "price", "rate", "cost", "kitna", "kitne"}
+
+
+def is_nudge(message: str) -> bool:
+    """At most two words, none of which says anything new."""
+    words = normalise(message).split()
+    if not words:
+        return "?" in (message or "")      # a bare "?"
+    return len(words) <= 2 and all(w in _NUDGE_WORDS for w in words)
+
+
+def is_price_deflection(reply: str) -> bool:
+    """Does this reply say the price has to come from the team?"""
+    # The phone number is in every reply, so only a real money figure counts
+    # as having quoted something.
+    if re.search(r"(?:rs\.?|inr|₹)\s*[\d,]+", reply or "", re.I):
+        return False                       # it actually quoted something
+    return bool(_PRICE_DEFLECTION.search(reply or ""))
 
 
 def _process_unlocked(customer_identifier: str, message: str,
@@ -3694,9 +4203,29 @@ def _process_unlocked(customer_identifier: str, message: str,
 
     # Never send back a reply this customer was just sent.
     try:
-        recent = list((db.get_state(conversation_id) or {}).get("recent_replies") or [])
+        prev_state = db.get_state(conversation_id) or {}
     except Exception:
-        recent = []
+        prev_state = {}
+    recent = list(prev_state.get("recent_replies") or [])
+
+    # Asked for a price we cannot quote, for the second time in the same
+    # conversation: stop restating what we carry and hand the quote over.
+    deflections = int(prev_state.get("price_deflections") or 0)
+    asked_price = a.intent == Intent.PRICE_INQUIRY or (
+        a.frame is not None and a.frame.topic_intent == Intent.PRICE_INQUIRY)
+    if (asked_price and is_price_deflection(a.reply)) or (
+            deflections >= 1 and is_nudge(message)):
+        if deflections >= 1:
+            hin = (a.frame.language if a.frame is not None else "") == "hi"
+            a.reply = _quote_handover(a, hin)
+            a.escalated = True
+            a.resolution = Resolution.ESCALATED
+            # "Deliverable in ahmedabad?", "Price & pitcher" - the other half
+            # of the question is still owed an answer.
+            a.reply = add_side_answers(a.reply, normalise(message), hin, True)
+        else:
+            deflections += 1
+
     a.reply = avoid_repeat(a, recent)
 
     # ---- persist dialogue state ------------------------------------------
@@ -3710,6 +4239,7 @@ def _process_unlocked(customer_identifier: str, message: str,
         else:                              # answer() bypassed (should not happen)
             state = prev
         state["recent_replies"] = (recent + [a.reply])[-RECENT_REPLIES_KEPT:]
+        state["price_deflections"] = deflections
         db.set_state(conversation_id, state)
     except Exception as error:
         print(f"[STATE] could not save state: {error!r}")

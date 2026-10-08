@@ -1477,7 +1477,7 @@ def membership_and_model_number_checks() -> List[Tuple[str, bool, str]]:
     # wording itself must not count (the first version of this check did).
     _old_offer = [f["id"] for f in kb.APPROVED_FAQS
                   if "2,999" in (f["answer"] or "") or "2,999" in (f["note"] or "")
-                  or re.search(r"gold members", (f["answer"] or "").lower())]
+                  or re.search(r"\bgold members\b", (f["answer"] or "").lower())]
     note("no approved FAQ answer still states the old offer", not _old_offer, str(_old_offer))
 
     # --- short pick-up/drop requests reach the team (15 Sep 2026) ---------
@@ -1586,6 +1586,262 @@ def thanks_checks() -> List[Tuple[str, bool, str]]:
     return out
 
 
+def dm_audit_checks():
+    """Every defect from the live DM audit, 24 Sep - 8 Oct 2026.
+
+    The messages are quoted exactly as customers typed them, including the
+    spellings ("creta mata", "Belaro neo", "Victoris") and the follow-ups
+    that used to get the same sentence back three times.
+    """
+    out = []
+
+    def note(name, ok, detail=""):
+        out.append((name, bool(ok), str(detail)[:120]))
+
+    import os, tempfile
+    import config as _cfg, database as _db
+    old_path = _cfg.DB_PATH
+    tmp = os.path.join(tempfile.gettempdir(), "cartrends_dm_audit.db")
+    for x in ("", "-wal", "-shm"):
+        if os.path.exists(tmp + x):
+            os.remove(tmp + x)
+    _db.close_connection()
+    _cfg.DB_PATH = tmp
+
+    def run(cid, msgs):
+        return [brain.process(cid, m, use_ai=False) for m in msgs]
+
+    PROMISES = ("we deliver", "we will deliver", "we can deliver", "delivery available",
+                "bhej denge", "bhej dete hain", "courier kar denge", "ship it to you")
+
+    try:
+        _db.init_db()
+
+        # ---- @aakash028: three identical replies in a row ----------------
+        r = run("au_aakash", ["GFX PRO Mat for punch price ?",
+                              "Please let me know the price . Deliverable in ahmedabad ?",
+                              "?",
+                              "GFX PRO Mat for punch price ?"])
+        texts = [x.reply for x in r]
+        note("A1: the same sentence is never sent twice in a row",
+             len(set(texts)) == len(texts), " || ".join(t[:40] for t in texts))
+        note("A2: the delivery question is answered, not ignored",
+             "ahmedabad" in texts[1].lower(), texts[1])
+        note("A3: no delivery is ever promised",
+             not any(x in " ".join(texts).lower() for x in PROMISES), texts[1])
+        note("A4: every reply still gives the number",
+             all(kb.PHONE in t for t in texts), texts[2])
+        note("A5: asking the price again hands it to the team by name",
+             "team" in texts[1].lower() or "team" in texts[2].lower(), texts[2])
+        note("A6: the car is never asked for again once given",
+             not any("tell me your car model" in t.lower() for t in texts), texts[2])
+
+        # ---- @saurabh_kumar99688: "mata" ---------------------------------
+        r = run("au_saurabh", ["I want creta mata", "Mata", "Mats"])
+        note("B1: 'creta mata' is understood as mats",
+             "mat" in r[0].reply.lower() and r[0].product in (
+                 "floor_mats", "gfx", "gfx_pro"), r[0].reply)
+        note("B2: it names their Creta",
+             "creta" in r[0].reply.lower(), r[0].reply)
+        note("B3: no service menu for a clear mats question",
+             "what would you like" not in r[0].reply.lower(), r[0].reply)
+
+        # ---- @whosukhvinder / @amaanmirza0786: the Maruti Victoris -------
+        r = run("au_victoris", ["Price for Gfx pro Matt for Maruti Victoris ?", "Victoris"])
+        note("C1: the Victoris is recognised",
+             "victoris" in r[0].reply.lower(), r[0].reply)
+        note("C2: the car is not asked for when it was given",
+             "which car is it for" not in r[0].reply.lower(), r[0].reply)
+        note("C3: repeating the car does not repeat the reply",
+             r[1].reply != r[0].reply, r[1].reply)
+
+        # ---- @vivek.sehrawat31: Tata Sierra EV ---------------------------
+        r = run("au_sierra", ["Hello bhai ji Tata sierra ev ke gfx matts honge, "
+                              "ev ke piche wala flat chahiye"])
+        note("D1: the Sierra is recognised",
+             "sierra" in r[0].reply.lower(), r[0].reply)
+        note("D2: and it is not asked which car",
+             "kaunsi car" not in r[0].reply.lower(), r[0].reply)
+
+        # ---- @gujralsarabjitsingh: "desizer", "matting" -------------------
+        r = run("au_desizer", ["Required for my maruti desizer new model 2026 cng "
+                               "automatic gfx pro matting"])
+        note("E1: 'desizer' is read as a Dzire",
+             "dzire" in r[0].reply.lower(), r[0].reply)
+
+        # ---- @sandeep994384: "Belaro neo", year already given ------------
+        r = run("au_bolero", ["Mahindra Belaro neo ( N11) model 2026 ka door mat ka price",
+                              "Price & pitcher"])
+        note("F1: 'Belaro neo' is read as a Bolero Neo",
+             "bolero neo" in r[0].reply.lower(), r[0].reply)
+        note("F2: the year is not asked for when it was given",
+             "model year" not in r[0].reply.lower(), r[0].reply)
+        note("F3: asking again does not repeat the sentence",
+             r[1].reply != r[0].reply, r[1].reply)
+
+        # ---- @prashant_bhor_1976: another city, then stacked handovers ----
+        r = run("au_navimumbai", ["Any one in Navi Mumbai", "Creta automatic",
+                                  "Required Floor mat", "Bucket type"])
+        note("G1: a bare city name is answered",
+             "jaipur" in r[0].reply.lower() and "navi mumbai" in r[0].reply.lower(),
+             r[0].reply)
+        note("G2: and promises nothing about delivery",
+             not any(x in r[0].reply.lower() for x in PROMISES), r[0].reply)
+        note("G3: one handover sentence per reply, not two",
+             all(x.reply.lower().count("our team will confirm") <= 1 for x in r),
+             r[3].reply)
+
+        # ---- @spt_1978_: a part we know nothing about ---------------------
+        r = run("au_mirror", ["Duster 2018 auto fold mirror available hai"])
+        note("H1: a mirror question is not answered with timing belts",
+             not any(w in r[0].reply.lower() for w in
+                     ("timing belt", "water pump", "clutch plate")), r[0].reply)
+        note("H2: the mirror is named and handed to the team",
+             "mirror" in r[0].reply.lower() and "team" in r[0].reply.lower(),
+             r[0].reply)
+        note("H3: and their Duster is acknowledged",
+             "duster" in r[0].reply.lower(), r[0].reply)
+
+        # ---- suppliers and affiliate pitches are not customers -----------
+        r = run("au_supplier", [
+            "I hope you are doing well. This is Dina from Ningbo Hongseen "
+            "Mechanical & Electrical Technology Co., Ltd., China. We specialize in "
+            "automotive accessories and are currently looking for reliable partners "
+            "and distributors for our car covers. OEM / customized logo and packaging "
+            "supported. Competitive factory-direct pricing. Small trial orders are "
+            "acceptable. Which types of car covers are you currently selling?"])
+        note("I1: a supplier pitch gets no product pitch back",
+             not any(w in r[0].reply.lower() for w in
+                     ("engine oil", "tyres", "7d", "coolant", "ppf")), r[0].reply)
+        note("I2: it is pointed at the team",
+             kb.PHONE in r[0].reply and "team" in r[0].reply.lower(), r[0].reply)
+        r = run("au_affiliate", [
+            "Hi Team, I run an automobile-focused Instagram page. I am interested in "
+            "promoting your automotive products through Instagram Reels/Stories and "
+            "affiliate marketing. Could you please let me know if you have an "
+            "affiliate program or collaboration opportunity?"])
+        note("I3: an affiliate proposal gets no engine-oil pitch",
+             "engine oil" not in r[0].reply.lower(), r[0].reply)
+
+        # ---- "Ok" is a sign-off, "Yes" still answers our question --------
+        r = run("au_ok", ["gfx pro mats for i20 2019", "Ok"])
+        note("J1: 'Ok' closes politely instead of pushing a booking",
+             "slot" not in r[1].reply.lower() and "preferred day" not in r[1].reply.lower(),
+             r[1].reply)
+        note("J2: 'Ok' is not answered with the cold menu",
+             "tell me your car model" not in r[1].reply.lower(), r[1].reply)
+        r = run("au_yes", ["Celerio vxi cng", "Yes"])
+        note("J3: a bare 'Yes' to our question keeps their Celerio",
+             "celerio" in r[1].reply.lower(), r[1].reply)
+
+        # ---- the generic mats brag is gone -------------------------------
+        for msg, car in [("Nexon car mat", "nexon"),
+                         ("honda city 2017 mat. pricem", "city"),
+                         ("Dzire 2017 matt", "dzire"),
+                         ("I10 grand mat price please", "i10"),
+                         ("Alto k10 2023 model price mat with grass", "alto"),
+                         ("Breeza k liye mat", "brezza"),
+                         ("Tata punch car ka mat kya ret hai bhaiya", "punch")]:
+            a = brain.answer(msg, None, use_ai=False)
+            note(f"K: {msg!r} is answered about their own car",
+                 car in a.reply.lower(), a.reply)
+            note(f"K: {msg!r} does not open with the accessories boast",
+                 "biggest accessories store" not in a.reply.lower(), a.reply)
+            note(f"K: {msg!r} stays short",
+                 len(a.reply) <= 230, f"{len(a.reply)} chars")
+
+        # ---- an approved answer written for THEIR car still wins ---------
+        a = brain.answer("lifelong mat for sonet", None, use_ai=False)
+        note("L1: the approved Sonet mats answer is still used",
+             a.faq_id == 86, f"faq={a.faq_id}")
+
+        # ---- the second time we cannot quote a price ------------------
+        r = run("au_twice", ["Gfx pro mats for Ertiga 2016", "Price", "Price pl"])
+        note("N1: the second price ask is handed over, not restated",
+             r[2].reply != r[1].reply and "team" in r[2].reply.lower(), r[2].reply)
+        note("N2: the handover asks for a way to reach them",
+             "whatsapp" in r[2].reply.lower(), r[2].reply)
+        r = run("au_nudge", ["Totyta hyryder", "Mat", "Floor", "Price", "Bato"])
+        note("N3: 'Bato' after a price ask is not answered with the catalogue",
+             r[4].reply != r[2].reply and r[4].reply != r[3].reply, r[4].reply)
+
+        # ---- the same answer twice says it is the same answer ----------
+        r = run("au_same", ["I want creta mata", "Mata", "Mats"])
+        note("N4: no two replies in a row are identical",
+             r[1].reply != r[2].reply, r[2].reply)
+        note("N5: and the facts are still there the second time",
+             "lifelong" in r[2].reply.lower(), r[2].reply)
+
+        # ---- photos -----------------------------------------------------
+        r = run("au_photo", ["Mahindra Belaro neo ( N11) model 2026 ka door mat ka price",
+                             "Price & pitcher"])
+        note("N6: a request for a picture is answered",
+             "photo" in r[1].reply.lower(), r[1].reply)
+        note("N7: and it points at WhatsApp, where a photo can be sent",
+             kb.PHONE in r[1].reply, r[1].reply)
+
+        # ---- a blast, and another business's auto-reply ----------------
+        r = run("au_blast", ["Like share and comment"])
+        note("N8: a like-share-comment blast gets no service menu",
+             "ppf" not in r[0].reply.lower(), r[0].reply)
+        r = run("au_autoreply", ["Hi! Thanks for contacting Priya Automotive. "
+                                 "Please share your Name, Mobile Number & Product "
+                                 "Enquiry with us. Our team will get back to you shortly."])
+        note("N9: another business's auto-reply is not given our opening hours",
+             "10:00" not in r[0].reply and "monday" not in r[0].reply.lower(),
+             r[0].reply)
+
+    finally:
+        _db.close_connection()
+        _cfg.DB_PATH = old_path
+
+    # ---- the rule behind all of it -----------------------------------
+    note("M1: a handover sentence counts as saying nothing",
+         not brain.reply_says_something(
+             "GFX Pro/Lifelong mats for your Tata Punch: the exact price depends "
+             "on the car model and variant. Our team will confirm it - "
+             "call/WhatsApp 6367857737."))
+    note("M2: a clarifying menu counts as saying nothing",
+         not brain.reply_says_something(
+             "Thanks! What would you like done on your City? We handle PPF and "
+             "ceramic coating, denting and painting, full service and more."))
+    note("M3: a real fact counts as saying something",
+         brain.reply_says_something(
+             "Used cars start from Rs 99,000 at our Dholai showroom."))
+    note("M4: a described product counts as saying something",
+         brain.reply_says_something(
+             "Yes, GFX Pro/Lifelong mats are custom molded with raised edges."))
+    note("M5: our own address survives the sentence split",
+         brain.trim_repeated_handover(
+             "Our team will confirm. We're at Opp. ISKCON Temple, Dholai, "
+             "Jaipur - whether we can send it to Pune is something our team "
+             "will confirm.").count("ISKCON") == 1)
+    note("M6: 'matte black paint' is not a floor mat",
+         brain.perceive("matte black paint").product is None)
+    note("M7: 'ret' is read as a price question",
+         "price" in brain.normalise("mat ka ret kya hai"),
+         brain.normalise("mat ka ret kya hai"))
+    note("M9: 'share' is not corrected into 'spare'",
+         "share" in brain.normalise("photo share karo"),
+         brain.normalise("photo share karo"))
+    note("M10: 'picture dikhao' is not read as a puncture",
+         "puncture" not in brain.normalise("picture dikhao"),
+         brain.normalise("picture dikhao"))
+    note("M11: 'matte black paint' is still painting, not mats",
+         brain.perceive("matte black paint").service == kb.Service.PAINTING)
+    note("M12: a photo request is recognised",
+         brain.asks_for_photo("photo bhej do") and
+         brain.asks_for_photo(brain.normalise("Price & pitcher")))
+    note("M13: a bare nudge is recognised, a real question is not",
+         brain.is_nudge("bato") and brain.is_nudge("?")
+         and not brain.is_nudge("creta ppf price"))
+    note("M8: a specific part never borrows another part's answer",
+         brain.parts_named("auto fold mirror available") == {"mirror",
+                                                             "side mirror"} or
+         "mirror" in brain.parts_named("auto fold mirror available"))
+    return out
+
+
 def main(use_ai: bool = False) -> int:
     print("=" * 78)
     print(f" CAR TRENDS CHATBOT - AUTOMATED TEST SUITE   ({len(CASES)} cases)")
@@ -1623,7 +1879,8 @@ def main(use_ai: bool = False) -> int:
                       ("LIVE REPLY QUALITY (14-15 Sep)", live_quality_checks),
                       ("LIVE REPLY QUALITY 2 (repeat / floor met / Pro)", live_quality_checks_2),
                       ("GOLD MEMBERSHIP REMOVED / ALTO 800", membership_and_model_number_checks),
-                      ("THANKS CLOSES THE CHAT", thanks_checks)]:
+                      ("THANKS CLOSES THE CHAT", thanks_checks),
+                      ("LIVE DM AUDIT (24 Sep - 8 Oct)", dm_audit_checks)]:
         print("\n--- " + title + " ---")
         section_failed = 0
         for name, ok, detail in fn():
