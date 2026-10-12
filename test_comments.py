@@ -471,6 +471,25 @@ for _i, _city in enumerate(["Bangalore", "Pune"]):
           not any(w in _r["public"].lower() for w in ("deliver", "ship", "courier", "bhej denge")),
           _r["public"])
 
+# Live, 12 Oct 2026, found by the first weekly gap report: our own Reel
+# captions are often a call to action - Comment "Location" - and that was
+# read as a LOCATION topic, so "Santro 2019" was answered with the address.
+_CTA_REEL = {"caption": 'Comment "Location"', "service": None, "product": None}
+_cta_seen = brain.perceive(_CTA_REEL["caption"])
+check("RQ10: a call-to-action caption is not a topic",
+      _cta_seen.service in brain.dialogue.SIDE_SERVICES,
+      f"service={_cta_seen.service}")
+_CTA_REEL["service"] = (None if _cta_seen.service in brain.dialogue.SIDE_SERVICES
+                        else _cta_seen.service)
+check("RQ10: so nothing is seeded from it",
+      not comments.seed_topic_from_reel("rqcta", _CTA_REEL,
+                                        brain.perceive("Santro 2019")))
+_r = comments.handle_comment("rqcta1", "rqctau1", "reelCTA", "Santro 2019",
+                             use_ai=False, topic_hint=_CTA_REEL)
+check("RQ10: a car name is not answered with the address",
+      "iskcon" not in _r["private"].lower() and "dholai" not in _r["private"].lower(),
+      _r["private"])
+
 _loc = []
 for _i in range(3):
     _r = comments.handle_comment(f"rqL{_i}", f"rqLu{_i}", "reelRQ5", "Location", use_ai=False)
