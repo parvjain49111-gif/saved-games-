@@ -255,11 +255,9 @@ def analyse(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
             if row["where"] == "comment" and row["caption"]:
                 hint = topics.get(row["media_id"])
                 if hint is None:
-                    seen = brain.perceive(row["caption"])
-                    service = (None if seen.service in brain.dialogue.SIDE_SERVICES
-                               else seen.service)
+                    service, product = brain.reel_topic(row["caption"])
                     hint = {"caption": row["caption"], "service": service,
-                            "product": seen.product}
+                            "product": product}
                     topics[row["media_id"]] = hint
                 if hint.get("service") or hint.get("product"):
                     _comments.seed_topic_from_reel(

@@ -72,6 +72,7 @@ SYNONYMS: Dict[str, str] = {
     # --- price words ---
     "prce": "price", "pric": "price", "prise": "price", "rt": "rate",
     "bato": "batao", "btao": "batao", "batado": "batao",
+    "cowar": "cover", "kavar": "cover", "kawar": "cover", "covar": "cover",
     "ret": "rate", "rait": "rate", "reat": "rate", "pricem": "price",
     "prize": "price", "pric": "price",
     "picture": "photo", "pictures": "photo", "photos": "photo",
@@ -160,6 +161,7 @@ PHRASE_SYNONYMS: Dict[str, str] = {
     "victories": "victoris", "victoras": "victoris", "victorious": "victoris",
     "desizer": "dzire", "dezier": "dzire", "maruti desire": "maruti dzire",
     "belaro": "bolero", "balero": "bolero", "i10 grand": "grand i10",
+    "7 xo": "7xo", "3 xo": "3xo", "xuv700 xo": "7xo", "thar rox": "thar roxx",
 }
 
 # "Mata", "Matte", "matt", "matting" all mean the floor mat - except where
@@ -264,6 +266,12 @@ COMMON_WORDS = [
     "plus", "mirror", "glass", "fold", "folding", "bucket", "tray",
     # "picture dikhao" was corrected to "puncture dikhao" and answered
     # about puncture repair (live, 28 Sep 2026).
+    # "cover karta hai" became "cover karwa hai": everyday verb forms the
+    # vocabulary did not know were being "corrected" into ones it did.
+    "karta", "karti", "karte", "hota", "hoti", "hote", "deta", "deti", "dete",
+    "leta", "leti", "lete", "jata", "jati", "jate", "aata", "aati", "aate",
+    "rehta", "rehti", "rehte", "rakhta", "rakhti", "rakhte", "lagta", "lagti",
+    "lagte", "chalta", "chalti", "chalte", "banta", "banti", "bante",
     "share", "shares", "shared", "sharing", "like", "likes", "comment",
     "comments", "follow", "followers", "story", "stories", "page", "pages",
     "photo", "picture", "pictures", "pics", "image", "images", "video",
@@ -485,7 +493,7 @@ _ALIASES_SORTED = sorted(kb.PRODUCT_ALIASES.items(),
 
 def detect_products(norm: str) -> List[str]:
     """Every product the customer named, in order of appearance."""
-    found: List[Tuple[int, int, str]] = []
+    found: List[Tuple[int, int, str, int]] = []
     seen = set()
     neg = negated_terms(norm)
     for alias, key in _ALIASES_SORTED:
@@ -493,12 +501,20 @@ def detect_products(norm: str) -> List[str]:
         if m and any(w in neg for w in alias.split()):
             continue                      # "not normal, pro wala" - drop normal
         if m and key not in seen:
+            # An alias found entirely inside another alias's match is not a
+            # second product: "covers" inside "seat covers" is not a car
+            # cover, "mat" inside "gfx pro mat" is not a second set of mats.
+            # _ALIASES_SORTED is longest-first, so the enclosing match is
+            # always already in the list.
+            if any(start <= m.start() and m.end() <= end
+                   for start, _, _, end in found):
+                continue
             seen.add(key)
             # Sort key: position, then the LONGER alias first. "gfx pro mat"
             # and "gfx" start at the same place; the specific one must win,
             # not the alphabetically earlier key.
-            found.append((m.start(), -len(alias), key))
-    return [k for _, _, k in sorted(found)]
+            found.append((m.start(), -len(alias), key, m.end()))
+    return [k for _, _, k, _ in sorted(found)]
 
 
 def _product_suppressed(key: str, norm: str) -> bool:
@@ -905,6 +921,9 @@ CAR_MODELS = [
     # Live DMs, Sep-Oct 2026: two owners asked for Victoris mats and were
     # asked "which car is it for?" twice, a Sierra EV owner once.
     "victoris", "sierra", "bolero neo", "victoris cng",
+    # Weekly gap report, 18 Oct 2026: "7xo to bola" - the customer had said
+    # it twice. The XUV 3XO / 7XO, the Thar Roxx on its own, the XEV 9S.
+    "xuv 3xo", "3xo", "xuv 7xo", "7xo", "roxx", "xev 9s", "xev 9e",
 ]
 
 # Make names, so "Skoda octavia" and a bare "Skoda" both register.
@@ -936,6 +955,9 @@ CAR_BRANDS = {
     "xuv300": "Mahindra",
     "victoris": "Maruti", "victoris cng": "Maruti", "sierra": "Tata",
     "bolero neo": "Mahindra",
+    "xuv 3xo": "Mahindra", "3xo": "Mahindra", "xuv 7xo": "Mahindra",
+    "7xo": "Mahindra", "roxx": "Mahindra", "thar roxx": "Mahindra",
+    "xev 9s": "Mahindra", "xev 9e": "Mahindra",
 }
 
 _YEAR = re.compile(r"\b(19[89]\d|20[0-4]\d)\b")
@@ -978,7 +1000,10 @@ _MODEL_DISPLAY = {"i10": "i10", "i20": "i20", "bmw": "BMW", "xuv700": "XUV700",
                   "alto 800": "Alto 800", "alto k10": "Alto K10",
                   "xuv500": "XUV500", "xuv400": "XUV400",
                   "victoris": "Victoris", "victoris cng": "Victoris",
-                  "sierra": "Sierra", "bolero neo": "Bolero Neo"}
+                  "sierra": "Sierra", "bolero neo": "Bolero Neo",
+                  "xuv 3xo": "XUV 3XO", "3xo": "XUV 3XO",
+                  "xuv 7xo": "XUV 7XO", "7xo": "XUV 7XO",
+                  "roxx": "Thar Roxx", "xev 9s": "XEV 9S", "xev 9e": "XEV 9e"}
 
 
 def extract_car(norm: str) -> Tuple[Optional[str], Optional[str], Optional[str]]:
@@ -2155,6 +2180,24 @@ def _answer_core(message: str, conversation_id: Optional[str] = None,
             base.resolution = Resolution.BOOKING_REQUESTED
         return base
 
+    # ---- "Please add the country code" (18 Oct 2026, a customer abroad) ----
+    # Nothing new is claimed: +91 is India, and wa.me is WhatsApp's own way
+    # of opening a chat with that same number.
+    if contains_any(norm, ["country code", "isd code", "isd", "std code",
+                           "international number", "calling from abroad",
+                           "outside india", "with 91", "plus 91", "91 ke saath"]):
+        base.reply = (
+            f"Country code ke saath number hai +91 {PHONE} - WhatsApp par seedha "
+            f"message kar sakte hain: https://wa.me/91{PHONE}"
+            if _hinglish(norm) else
+            f"With the country code it's +91 {PHONE} - on WhatsApp you can "
+            f"message it directly: https://wa.me/91{PHONE}")
+        base.source, base.intent = "RULE", Intent.CONTACT
+        base.service = Service.CONTACT
+        base.confidence, base.covered = 0.9, True
+        base.resolution = Resolution.ANSWERED
+        return base
+
     # ---- Not a customer at all -------------------------------------------
     if is_business_pitch(norm, p.n_tokens):
         base.reply = pitch_reply(_hinglish(norm))
@@ -3002,6 +3045,41 @@ def _car_phrase(brand: Optional[str], model: Optional[str]) -> Optional[str]:
 
 def _bullets(items: List[str]) -> str:
     return "\n".join("• " + i for i in items)
+
+
+# ---------------------------------------------------------------------------
+# WHAT A REEL SELLS, FROM ITS CAPTION
+# ---------------------------------------------------------------------------
+# Our captions are mostly a call to action: Comment "cover", Comment
+# "Location", Comment "Your Car Name". The quoted word is the subject when
+# it names a product or a service we do; "Location", "contact number" and
+# "Your Car Name" name nothing, and must seed nothing - a car name under
+# the Location Reel was once answered with the address (12 Oct 2026).
+_CAPTION_CTA = re.compile(
+    r"comment\s*[\"\u201c\u201d'\u2018\u2019]\s*([^\"\u201c\u201d'\u2018\u2019]{1,40})"
+    r"[\"\u201c\u201d'\u2018\u2019]", re.I)
+
+
+def reel_topic(caption: str) -> Tuple[Optional[str], Optional[str]]:
+    """(service, product) a Reel is about, or (None, None).
+
+    The quoted word of a call to action is read first - Comment "cover" is
+    the car-cover Reel. Failing that, the caption as a whole. A side
+    service (location, contact, hours) is never a topic.
+    """
+    caption = caption or ""
+    candidates = []
+    m = _CAPTION_CTA.search(caption)
+    if m:
+        candidates.append(m.group(1))
+    candidates.append(caption[:400])
+    for text in candidates:
+        seen = perceive(text)
+        service = (None if seen.service in dialogue.SIDE_SERVICES
+                   else seen.service)
+        if service or seen.product:
+            return service, seen.product
+    return None, None
 
 
 # ---------------------------------------------------------------------------
@@ -4033,6 +4111,11 @@ def reply_says_something(reply: str) -> bool:
     """
     if _MENU_REPLY.search(reply or "") or _is_generic(reply or ""):
         return False
+    # The number WITH its country code, or the WhatsApp link, is the fact a
+    # customer abroad asked for - not a handover, even though the phone
+    # number appears in every handover.
+    if "+91 " in (reply or "") or "wa.me/" in (reply or ""):
+        return True
     for sentence in _SENTENCE_SPLIT.split(reply or ""):
         words = [w for w in re.sub(r"[^\w\s/]", " ", sentence).split()]
         if len(words) < 3:

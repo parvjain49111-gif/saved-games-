@@ -1002,6 +1002,17 @@ PRODUCTS: Dict[str, Dict[str, Any]] = {
         "detail": None, "benefit": None,
         "category": Service.ACCESSORIES,
         "verified": False, "faqs": [],
+        # The VERB: "what does ppf cover?", "cover hoga?" - coverage, not a
+        # product. The same gate that keeps "tyre balancing" from being a sale.
+        "suppress_if": ["ppf cover", "ceramic cover", "coating cover",
+                        "does it cover", "does ppf cover", "what does",
+                        "cover the", "covers the", "covered", "coverage",
+                        "cover karta", "cover karti", "cover karte",
+                        "cover hota", "cover hoti", "cover hote", "cover hoga",
+                        "cover hogi", "cover karega", "cover karegi",
+                        "kya cover", "cover kya hota", "cover kar deta",
+                        "cover ho jata", "cover ho jayega", "cover karwa",
+                        "cover karwana", "cover karwani", "cover karna"],
     },
     "mud_flaps": {
         "label": "mud flaps",
@@ -1081,6 +1092,12 @@ PRODUCT_ALIASES: Dict[str, str] = {
     # Live, 4 Oct 2026: "Duster 2018 auto fold mirror available hai" was
     # answered with the timing-belt answer. Nothing approved covers mirrors,
     # so it is recognised and handed to the team like any unverified item.
+    # "7xo ki kya price cowar ka", "Swift 2016 body cover" (Oct 2026). A
+    # bare "cover" is the car cover; "seat cover" and "steering cover" are
+    # longer aliases and win where they appear.
+    "cover": "car_cover", "covers": "car_cover", "body cover": "car_cover",
+    "car body cover": "car_cover", "full cover": "car_cover",
+
     "side mirror": "side_mirror", "side mirrors": "side_mirror",
     "mirror": "side_mirror", "mirrors": "side_mirror",
     "orvm": "side_mirror", "auto fold mirror": "side_mirror",

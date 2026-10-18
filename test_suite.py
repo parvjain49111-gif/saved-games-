@@ -1795,6 +1795,47 @@ def dm_audit_checks():
         _db.close_connection()
         _cfg.DB_PATH = old_path
 
+    # ---- weekly report 2, 18 Oct 2026 --------------------------------
+    for msg, car in [("Gfx pro matts required for 3xo manual", "xuv 3xo"),
+                     ("GFX PRO available for Roxx ?", "thar roxx"),
+                     ("Mahindra 7xo ka mat milega", "xuv 7xo"),
+                     ("xev 9s ke liye gfx pro", "xev 9s")]:
+        a = brain.answer(msg, None, use_ai=False)
+        note(f"W2: {msg!r} names the car back",
+             car in a.reply.lower(), a.reply)
+        note(f"W2: {msg!r} is not asked which car",
+             "which car" not in a.reply.lower() and "kaunsi car" not in a.reply.lower(),
+             a.reply)
+    a = brain.answer("7xo ki kya price cowar ka", None, use_ai=False)
+    note("W2: 'cowar' is understood as a car cover",
+         a.product == "car_cover", f"product={a.product}")
+    note("W2: and the XUV 7XO is named in the reply",
+         "xuv 7xo" in a.reply.lower(), a.reply)
+    note("W2: a bare 'cover' is the car cover, 'seat cover' still seat covers",
+         brain.perceive("cover").product == "car_cover"
+         and brain.perceive("seat cover").product == "seat_covers"
+         and brain.perceive("steering cover").product == "steering_cover")
+    a = brain.answer("Please add the country code", None, use_ai=False)
+    note("W2: the country code is given when asked",
+         "+91 " + kb.PHONE in a.reply, a.reply)
+    note("W2: with the WhatsApp link for the same number",
+         f"wa.me/91{kb.PHONE}" in a.reply, a.reply)
+    note("W2: and no service menu",
+         "tell me your car model" not in a.reply.lower(), a.reply)
+    note("W2: 'will be 6 days' is not a car",
+         brain.perceive("will be 6 days").model is None)
+    note("W2: an alias inside a longer alias is not a second product",
+         brain.detect_products("seat covers for thar") == ["seat_covers"]
+         and brain.detect_products("gfx pro mat for creta") == ["gfx_pro"],
+         str(brain.detect_products("seat covers for thar")))
+    note("W2: the verb 'cover' is never a car cover",
+         brain.perceive("ppf bonnet cover karta hai").product is None
+         and brain.perceive("what does ppf cover").product is None
+         and brain.perceive("bumper cover karwa do").product is None)
+    note("W2: 'karta' is not corrected into 'karwa'",
+         "karta" in brain.normalise("cover karta hai"),
+         brain.normalise("cover karta hai"))
+
     # ---- the rule behind all of it -----------------------------------
     note("M1: a handover sentence counts as saying nothing",
          not brain.reply_says_something(

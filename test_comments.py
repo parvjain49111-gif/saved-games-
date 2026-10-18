@@ -490,6 +490,27 @@ check("RQ10: a car name is not answered with the address",
       "iskcon" not in _r["private"].lower() and "dholai" not in _r["private"].lower(),
       _r["private"])
 
+# Weekly report 2, 18 Oct 2026: the Reel captioned  Comment "cover"  is the
+# car-cover Reel, and "7xo" under it is a question about a cover for a 7XO.
+check("RQ11: the quoted word of a call to action names the Reel's subject",
+      brain.reel_topic('Comment "cover"') == (None, "car_cover"),
+      str(brain.reel_topic('Comment "cover"')))
+check("RQ11: captions that name nothing still seed nothing",
+      brain.reel_topic('Comment "Location"') == (None, None)
+      and brain.reel_topic('Comment "contact number "') == (None, None)
+      and brain.reel_topic('Comment "Your Car Name"') == (None, None))
+check("RQ11: a descriptive caption still works",
+      brain.reel_topic("GFX Pro 7D mats for every car - Car Trends Jaipur")[1]
+      in ("gfx", "gfx_pro", "gfx_normal"))
+_COVER_REEL = {"caption": 'Comment "cover"', "service": None, "product": "car_cover"}
+_r = comments.handle_comment("rqcov1", "rqcovu1", "reelCOVER", "7xo", use_ai=False,
+                             topic_hint=_COVER_REEL)
+check("RQ11: '7xo' under the cover Reel is about a cover for the XUV 7XO",
+      "cover" in _r["private"].lower() and "xuv 7xo" in _r["private"].lower(),
+      _r["private"])
+check("RQ11: and is not asked which car",
+      "which car" not in _r["private"].lower(), _r["private"])
+
 _loc = []
 for _i in range(3):
     _r = comments.handle_comment(f"rqL{_i}", f"rqLu{_i}", "reelRQ5", "Location", use_ai=False)

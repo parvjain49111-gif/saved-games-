@@ -676,15 +676,11 @@ def media_topic(media_id: str) -> Optional[Dict[str, Any]]:
                     print(f"[REEL] caption lookup failed: HTTP {r.status_code}")
             except Exception as error:
                 print(f"[REEL] caption lookup failed: {type(error).__name__}")
-        seen = brain.perceive(caption[:400]) if caption else None
-        service = getattr(seen, "service", None)
-        # A caption is only a topic when it says what the Reel SELLS. Our own
-        # captions are often a call to action - Comment "Location" - and
-        # reading that as a topic answered car questions with the address.
-        if service in brain.dialogue.SIDE_SERVICES:
-            service = None
-        row = {"caption": caption, "service": service,
-               "product": getattr(seen, "product", None)}
+        # What the Reel sells: brain.reel_topic() reads the quoted word of a
+        # call-to-action caption - Comment "cover" - and ignores the ones
+        # that name nothing (Location, contact number, Your Car Name).
+        service, product = brain.reel_topic(caption) if caption else (None, None)
+        row = {"caption": caption, "service": service, "product": product}
         try:
             db.set_media_topic(media_id, row["caption"], row["service"], row["product"])
         except Exception as error:
