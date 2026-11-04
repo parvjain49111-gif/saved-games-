@@ -511,6 +511,38 @@ check("RQ11: '7xo' under the cover Reel is about a cover for the XUV 7XO",
 check("RQ11: and is not asked which car",
       "which car" not in _r["private"].lower(), _r["private"])
 
+# 4 Nov 2026 transcripts.
+check("RQ12: a Kylaq comment is not content-free",
+      not comments.is_content_free("Škoda ka hai kaylaq", brain.perceive("Škoda ka hai kaylaq")))
+check("RQ12: a seller's advert under our Reel is skipped",
+      comments.handle_comment("rqsell", "rqsellu", "reelCOVER2",
+                              "Mere paas honda city ka premium waterproof cover hai. "
+                              "Cover kabhi use nhi kia. bohot cheap de dunga dm kare",
+                              use_ai=False).get("skipped"))
+# a Reel learns its subject from its commenters
+db.record_media_ask("reelLEARN", "product:gfx_pro")
+check("RQ13: one ask teaches nothing", db.learned_media_topic("reelLEARN") is None)
+db.record_media_ask("reelLEARN", "product:gfx_pro")
+check("RQ13: two agreeing asks teach the Reel its subject",
+      db.learned_media_topic("reelLEARN") == "product:gfx_pro")
+db.record_media_ask("reelLEARN", "service:PPF")
+db.record_media_ask("reelLEARN", "service:PPF")
+check("RQ13: a split vote teaches nothing", db.learned_media_topic("reelLEARN") is None)
+# memory follows the customer from the comment thread into the DM
+_k = comments.conversation_key("reelMEM", "memuser")
+comments.handle_comment("rqmem1", "memuser", "reelMEM", "Hyryder", use_ai=False,
+                        topic_hint={"caption": "", "service": None, "product": "gfx_pro"})
+db.remember_thread("rqmem1", "memuser", "reelMEM")
+check("RQ14: the newest thread for a commenter is known",
+      db.latest_thread_for("memuser") == ("rqmem1", "reelMEM"))
+check("RQ14: the comment thread's memory is adopted by the DM conversation",
+      db.adopt_state(_k, "memuser"))
+_dm = brain.process("memuser", "Mat", use_ai=False)
+check("RQ14: the DM 'Mat' knows the Hyryder from the comment",
+      "hyryder" in _dm.reply.lower() and "once you tell me your car" not in _dm.reply.lower(),
+      _dm.reply)
+check("RQ14: adopting twice changes nothing", not db.adopt_state(_k, "memuser"))
+
 _loc = []
 for _i in range(3):
     _r = comments.handle_comment(f"rqL{_i}", f"rqLu{_i}", "reelRQ5", "Location", use_ai=False)

@@ -248,9 +248,12 @@ def analyse(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
     try:
         _db.init_db()
         topics: Dict[str, Dict[str, Any]] = {}
+        asks: Dict[str, collections.Counter] = {}
         for row in rows:
             if _is_link_only(row["text"]):
                 continue
+            if brain.is_bare_greeting(brain.normalise(row["text"])):
+                continue                           # "Hi" is not a question
             key = _conversation_key(row)
             if row["where"] == "comment" and row["caption"]:
                 hint = topics.get(row["media_id"])
@@ -259,9 +262,24 @@ def analyse(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
                     hint = {"caption": row["caption"], "service": service,
                             "product": product}
                     topics[row["media_id"]] = hint
+                if not (hint.get("service") or hint.get("product")):
+                    # the same learning the live bot does: what the other
+                    # commenters under this Reel asked about
+                    tally = asks.get(row["media_id"]) or collections.Counter()
+                    if tally:
+                        top, n = tally.most_common(1)[0]
+                        if n >= 2 and n / sum(tally.values()) >= 0.6:
+                            kind, _, k = top.partition(":")
+                            hint = dict(hint, service=k if kind == "service" else None,
+                                        product=k if kind == "product" else None)
+                seen_c = brain.perceive(row["text"])
                 if hint.get("service") or hint.get("product"):
-                    _comments.seed_topic_from_reel(
-                        key, hint, brain.perceive(row["text"]))
+                    _comments.seed_topic_from_reel(key, hint, seen_c)
+                if seen_c.product or (seen_c.service
+                                      and seen_c.service not in brain.dialogue.SIDE_SERVICES):
+                    asks.setdefault(row["media_id"], collections.Counter())[
+                        f"product:{seen_c.product}" if seen_c.product
+                        else f"service:{seen_c.service}"] += 1
             try:
                 a = brain.process(key, row["text"], use_ai=False)
             except Exception as error:           # never lose the whole report

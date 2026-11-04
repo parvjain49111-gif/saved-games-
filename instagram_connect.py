@@ -655,7 +655,12 @@ def refresh_if_needed(conn: Dict[str, Any], force: bool = False) -> Optional[str
         return None
     try:
         res = _graph("GET", f"{_IG_GRAPH}/refresh_access_token", token=conn["page_access_token"],
-                     params={"grant_type": "ig_refresh_token"}, what="token refresh")
+                     # refresh_access_token wants the token as a PARAMETER; the
+                     # Authorization header alone gets "access_token is required".
+                     # Live, 4 Nov 2026: every weekly refresh had failed this way.
+                     params={"grant_type": "ig_refresh_token",
+                             "access_token": conn["page_access_token"]},
+                     what="token refresh")
     except ConnectError as error:
         return f"token refresh failed: {error}"
     new_token = config.clean_token(res.get("access_token"))

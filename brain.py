@@ -41,6 +41,7 @@
 import difflib
 import math
 import re
+import unicodedata
 import threading
 import time
 from dataclasses import dataclass, field
@@ -162,6 +163,7 @@ PHRASE_SYNONYMS: Dict[str, str] = {
     "desizer": "dzire", "dezier": "dzire", "maruti desire": "maruti dzire",
     "belaro": "bolero", "balero": "bolero", "i10 grand": "grand i10",
     "7 xo": "7xo", "3 xo": "3xo", "xuv700 xo": "7xo", "thar rox": "thar roxx",
+    "kaylaq": "kylaq", "kylak": "kylaq", "kyalaq": "kylaq", "kaylak": "kylaq",
 }
 
 # "Mata", "Matte", "matt", "matting" all mean the floor mat - except where
@@ -196,6 +198,9 @@ def normalise(text: str) -> str:
     already-known words are never touched, so "alto" stays "alto".
     """
     text = (text or "").lower().strip()
+    # "Škoda", "Citroën": fold accents away before any word is looked up.
+    text = "".join(c for c in unicodedata.normalize("NFKD", text)
+                   if not unicodedata.combining(c))
     text = _PUNCT.sub(" ", text)
     text = _SPACES.sub(" ", text).strip()
     # Multi-word Hinglish idioms first: "jaisa banana" (make it look like)
@@ -924,6 +929,9 @@ CAR_MODELS = [
     # Weekly gap report, 18 Oct 2026: "7xo to bola" - the customer had said
     # it twice. The XUV 3XO / 7XO, the Thar Roxx on its own, the XEV 9S.
     "xuv 3xo", "3xo", "xuv 7xo", "7xo", "roxx", "xev 9s", "xev 9e",
+    # 4 Nov 2026 transcripts: a Kylaq comment got no reply at all; a Micra
+    # and a Syros were asked "which car?".
+    "kylaq", "micra", "syros",
 ]
 
 # Make names, so "Skoda octavia" and a bare "Skoda" both register.
@@ -958,6 +966,7 @@ CAR_BRANDS = {
     "xuv 3xo": "Mahindra", "3xo": "Mahindra", "xuv 7xo": "Mahindra",
     "7xo": "Mahindra", "roxx": "Mahindra", "thar roxx": "Mahindra",
     "xev 9s": "Mahindra", "xev 9e": "Mahindra",
+    "kylaq": "Skoda", "micra": "Nissan", "syros": "Kia",
 }
 
 _YEAR = re.compile(r"\b(19[89]\d|20[0-4]\d)\b")
@@ -1003,7 +1012,8 @@ _MODEL_DISPLAY = {"i10": "i10", "i20": "i20", "bmw": "BMW", "xuv700": "XUV700",
                   "sierra": "Sierra", "bolero neo": "Bolero Neo",
                   "xuv 3xo": "XUV 3XO", "3xo": "XUV 3XO",
                   "xuv 7xo": "XUV 7XO", "7xo": "XUV 7XO",
-                  "roxx": "Thar Roxx", "xev 9s": "XEV 9S", "xev 9e": "XEV 9e"}
+                  "roxx": "Thar Roxx", "xev 9s": "XEV 9S", "xev 9e": "XEV 9e",
+                  "kylaq": "Kylaq", "micra": "Micra", "syros": "Syros"}
 
 
 def extract_car(norm: str) -> Tuple[Optional[str], Optional[str], Optional[str]]:
@@ -1961,10 +1971,15 @@ def add_side_answers(reply: str, norm: str, hin: bool, has_topic: bool,
     # A question we never answered: "Deliverable in ahmedabad ?" - asked
     # alongside the price, so the price answer stays and this is added.
     city = other_city_in(norm)
+    side_only = is_side_only(norm)
     if (asks_delivery(norm) or (city and len(norm.split()) <= 6)) \
             and not _already_covers_delivery(reply) \
             and not is_business_pitch(norm, len(norm.split())):
-        if has_topic or reply_says_something(reply):
+        if side_only:
+            # "Delhi se hu m" inside a mats conversation: answer the delivery
+            # question, do not recite the mats answer a third time.
+            reply = delivery_reply(city, hin)
+        elif has_topic or reply_says_something(reply):
             with_address = "jaipur" not in reply.lower()
             reply = f"{reply.rstrip()} {delivery_note(city, hin, with_address)}"
         else:
@@ -1981,7 +1996,9 @@ def add_side_answers(reply: str, norm: str, hin: bool, has_topic: bool,
     # so say where it can.
     if asks_for_photo(norm) and "photo" not in reply.lower() \
             and not is_business_pitch(norm, len(norm.split())):
-        if has_topic or reply_says_something(reply):
+        if side_only and not asks_delivery(norm) and not city:
+            reply = photo_note(hin)
+        elif has_topic or reply_says_something(reply):
             reply = f"{reply.rstrip()} {photo_note(hin)}"
         else:
             reply = photo_note(hin)
@@ -2243,7 +2260,8 @@ def _answer_core(message: str, conversation_id: Optional[str] = None,
         # still did not say ("Price?"). Asking the identical question again
         # reads like a broken machine - 15 Sep 2026, live, twice in a row.
         # Hand the customer to the team instead, keeping what we do know.
-        if state.get("last_message_type") == MT.AMBIGUOUS:
+        if state.get("last_message_type") == MT.AMBIGUOUS \
+                and not is_bare_greeting(norm):
             known = _car_phrase(brand, model)
             if hin:
                 base.reply = (
@@ -2993,6 +3011,20 @@ _ACK_TOKENS = {"ok", "okay", "oky", "okk", "ok ji", "k", "kk", "theek", "thik",
                "great", "cool", "thanks", "thank", "thx"}
 
 
+# "Hi", "Hello sir", "Sir", "Bhai", "Namaste": a greeting or an honorific and
+# nothing else. Live, 2 Nov 2026, "Sir" after "Hi" was escalated with "I don't
+# want to guess" because it counted as a second ambiguous message.
+_GREETING_TOKENS = {"hi", "hii", "hiii", "hello", "hlo", "helo", "hey", "hy", "hyy",
+                    "namaste", "namaskar", "sir", "sirji", "ji", "bhai", "bhaiya",
+                    "boss", "madam", "mam", "good", "morning", "evening",
+                    "afternoon", "night", "dear", "team", "there", "jai", "jinendra"}
+
+
+def is_bare_greeting(norm: str) -> bool:
+    words = norm.split()
+    return bool(words) and len(words) <= 4 and all(w in _GREETING_TOKENS for w in words)
+
+
 def _closing_ack(p: "dialogue.Perception", norm: str,
                  state: Dict[str, Any]) -> bool:
     """A bare acknowledgement of an answer we already gave."""
@@ -3106,6 +3138,12 @@ _PITCH_PHRASES = [
     "website development", "web development service", "lead generation",
     # Another business's own auto-reply, bouncing back at us. Live, 7 Oct
     # 2026, one of them was answered with our opening hours.
+    # Someone selling their own goods to our followers (4 Nov 2026: "mere
+    # paas honda city ka premium waterproof cover hai ... bohot cheap de dunga").
+    "de dunga", "de dungi", "bech dunga", "bech raha", "bech rahi", "bechna hai",
+    "bechni hai", "sale karna hai", "sale karni hai", "sell karna hai",
+    "mere paas", "selling my", "for sale", "cheap de", "contact me for",
+    "second hand bechna", "resale",
     "thanks for contacting", "thank you for contacting",
     "thanks for messaging us", "thank you for messaging us",
     "our team will get back to you", "we will get back to you shortly",
@@ -3176,6 +3214,30 @@ def other_city_in(norm: str) -> Optional[str]:
         if re.search(r"\b" + re.escape(alias) + r"\b", norm):
             return kb.OTHER_CITIES[alias]
     return None
+
+
+# Words that carry nothing once the city and the delivery words are gone:
+# "Delhi se hu m" is "I'm from Delhi" and nothing else.
+_SIDE_FILLER = {"se", "hu", "hun", "hoon", "m", "main", "mai", "me", "mein", "i",
+                "am", "from", "in", "at", "hai", "h", "ka", "ki", "ke", "ko", "sir",
+                "bhai", "ji", "the", "a", "ho", "hain", "bhej", "bhejo", "bhejiye",
+                "do", "kar", "sakte", "sakta", "ya", "nahi", "kya", "hoga", "hogi",
+                "possible", "please", "pls", "plz", "bhi", "and", "aur", "to", "toh",
+                "yes", "haan", "it", "is", "this", "that", "my", "mera", "meri",
+                "city", "shehar", "tak", "wala", "wale", "wali", "available",
+                "avilble", "avail", "here", "yahan", "there", "wahan", "ap", "up",
+                "mp", "hp", "dl", "send", "share", "dikhao", "dikha", "dikhaiye",
+                "chahiye", "chaiye", "hello", "hi", "sa", "s"}
+
+
+def is_side_only(norm: str) -> bool:
+    """Nothing left once delivery words, photo words and cities are removed."""
+    text = norm
+    for w in (sorted(_DELIVERY_WORDS, key=len, reverse=True) + _PHOTO_WORDS
+              + list(kb.CITY_ALIASES_SORTED)):
+        text = re.sub(r"\b" + re.escape(w) + r"(?:e?s)?\b", " ", text)
+    left = [w for w in text.split() if w not in _SIDE_FILLER and not w.isdigit()]
+    return not left
 
 
 def delivery_note(city: Optional[str], hinglish: bool,

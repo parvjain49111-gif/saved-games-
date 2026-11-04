@@ -601,6 +601,21 @@ def send_private_reply(comment_id: str, text: str) -> bool:
 # rest of the server. It is scheduled by BackgroundTasks and therefore runs
 # only AFTER our 200 OK has already been sent to Meta (see requirement 7).
 # ---------------------------------------------------------------------------
+def _adopt_comment_memory(sender_id: str) -> None:
+    """A customer who commented and then DMs keeps what the thread knew."""
+    try:
+        if db.get_state(db.get_or_create_conversation(sender_id)):
+            return
+        found = db.latest_thread_for(sender_id)
+        if not found:
+            return
+        _, media_id = found
+        if db.adopt_state(comments.conversation_key(media_id, sender_id), sender_id):
+            print(f"[DM] comment-thread memory carried over for {sender_id}")
+    except Exception as error:
+        print(f"[DM] could not carry comment memory over: {error!r}")
+
+
 def handle_message(sender_id: str, user_message: str) -> None:
     """Run one full conversation turn for a single customer message.
 
@@ -619,6 +634,7 @@ def handle_message(sender_id: str, user_message: str) -> None:
     print(f"[CUSTOMER {sender_id}] {user_message}")
     print("-" * 70)
 
+    _adopt_comment_memory(sender_id)
     result = brain.process(sender_id, user_message)
 
     # The tag makes it obvious at a glance which layer answered:
@@ -681,6 +697,7 @@ def media_topic(media_id: str) -> Optional[Dict[str, Any]]:
         # that name nothing (Location, contact number, Your Car Name).
         service, product = brain.reel_topic(caption) if caption else (None, None)
         row = {"caption": caption, "service": service, "product": product}
+        # Added 4 Nov 2026: what commenters ask under each Reel.
         try:
             db.set_media_topic(media_id, row["caption"], row["service"], row["product"])
         except Exception as error:
@@ -688,7 +705,21 @@ def media_topic(media_id: str) -> Optional[Dict[str, Any]]:
         if row["service"] or row["product"]:
             print(f"[REEL] {media_id} is about "
                   f"{row['product'] or row['service']} (from its caption)")
-    return row if (row.get("service") or row.get("product")) else None
+    if row.get("service") or row.get("product"):
+        return row
+    # The caption said nothing - Comment "Location" - but the commenters do:
+    # two people asking about mats under this Reel make it the mats Reel.
+    try:
+        learned = db.learned_media_topic(media_id)
+    except Exception as error:
+        print(f"[REEL] could not read what commenters ask: {error!r}")
+        learned = None
+    if learned:
+        kind, _, key = learned.partition(":")
+        return {"caption": row.get("caption") or "",
+                "service": key if kind == "service" else None,
+                "product": key if kind == "product" else None, "learned": True}
+    return None
 
 
 def public_reply_allowed() -> bool:
@@ -818,6 +849,15 @@ def _handle_comment_in_turn(comment_id: str, commenter_id: str, media_id: str,
         print("[COMMENT] no reply (content-free / spam).")
         print("=" * 70 + "\n")
         return
+    # What this commenter asked about, for the Reel to learn its subject.
+    seen_now = brain.perceive(text)
+    if seen_now.product or (seen_now.service
+                            and seen_now.service not in brain.dialogue.SIDE_SERVICES):
+        try:
+            db.record_media_ask(media_id, f"product:{seen_now.product}" if seen_now.product
+                                else f"service:{seen_now.service}")
+        except Exception as error:
+            print(f"[COMMENT] could not record the ask: {error!r}")
     print(f"[PUBLIC  | {a.source:<10}] {result['public']}")
     print(f"[PRIVATE | {a.source:<10}] {result['private']}")
     print(f"           type={a.message_type} service={a.service} product={a.product} "
@@ -844,6 +884,13 @@ def _handle_comment_in_turn(comment_id: str, commenter_id: str, media_id: str,
                 print(f"[COMMENT] could not record our reply id: {error!r}")
     if config.COMMENT_PRIVATE_REPLY and result["private"]:
         private_ok = send_private_reply(comment_id, result["private"])
+        # The private reply opens a DM; the DM must know what the comment
+        # thread knows ("Hyryder"), or the next message is asked for the car.
+        try:
+            if db.adopt_state(result["conversation"], commenter_id):
+                print(f"[COMMENT] thread memory carried into the DM for {commenter_id}")
+        except Exception as error:
+            print(f"[COMMENT] could not carry memory into the DM: {error!r}")
     if config.send_is_configured() and not (public_ok or private_ok):
         # Nothing reached the customer: release the id so Meta's redelivery
         # (or a manual replay) can try again instead of being swallowed.

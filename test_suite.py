@@ -1836,6 +1836,54 @@ def dm_audit_checks():
          "karta" in brain.normalise("cover karta hai"),
          brain.normalise("cover karta hai"))
 
+    # ---- 4 Nov 2026 transcripts ------------------------------------
+    import os as _os, tempfile as _tf
+    import config as _cfg2, database as _db2
+    _old = _cfg2.DB_PATH
+    _tmp = _os.path.join(_tf.gettempdir(), "cartrends_nov_audit.db")
+    for _x in ("", "-wal", "-shm"):
+        if _os.path.exists(_tmp + _x):
+            _os.remove(_tmp + _x)
+    _db2.close_connection()
+    _cfg2.DB_PATH = _tmp
+    try:
+        _db2.init_db()
+        def run2(cid, msgs):
+            return [brain.process(cid, m, use_ai=False) for m in msgs]
+        r = run2("nv_sir", ["Ford figo aspire", "Hi", "Sir"])
+        note("V1: 'Sir' after 'Hi' is not escalated with 'I don't want to guess'",
+             "guess" not in r[2].reply.lower(), r[2].reply)
+        note("V2: and their Aspire is still remembered",
+             "aspire" in r[2].reply.lower(), r[2].reply)
+        r = run2("nv_delhi", ["Tata curvv ev k gfx matt chahiye", "Delhi se hu m"])
+        note("V3: 'Delhi se hu m' gets the delivery answer only",
+             "delhi" in r[1].reply.lower() and "gfx normal" not in r[1].reply.lower(),
+             r[1].reply)
+        note("V4: and it is short", len(r[1].reply) <= 200, f"{len(r[1].reply)} chars")
+        r = run2("nv_cod", ["Elite i20 2015 gfx pro mats how much cod avilble this is vizag ap"])
+        note("V5: a price question with a city keeps the price answer AND names the city",
+             "vizag" in r[0].reply.lower() and "i20" in r[0].reply.lower(), r[0].reply)
+    finally:
+        _db2.close_connection()
+        _cfg2.DB_PATH = _old
+    for msg, car in [("Škoda ka hai kaylaq", "kylaq"), ("Nissan micra 2015", "micra"),
+                     ("Gfx pro mats available for kia syros ev?", "syros")]:
+        a = brain.answer(msg, None, use_ai=False)
+        note(f"V6: {msg!r} names the car back", car in a.reply.lower(), a.reply)
+    note("V7: diacritics are folded before anything else",
+         brain.normalise("Škoda Citroën") == "skoda citroen", brain.normalise("Škoda Citroën"))
+    note("V8: a bare greeting is recognised, a question is not",
+         brain.is_bare_greeting("hello sir") and brain.is_bare_greeting("namaste ji")
+         and not brain.is_bare_greeting("hi ppf price"))
+    note("V9: a side-only message is recognised",
+         brain.is_side_only("delhi se hu m") and brain.is_side_only("cod available")
+         and not brain.is_side_only("swift 2026 gfx mat how much price courier available"))
+    note("V10: a seller's advert is a pitch, not an enquiry",
+         brain.is_business_pitch(brain.normalise(
+             "Mere paas honda city ka premium waterproof cover hai dual color me. "
+             "bohot cheap de dunga dm kare"), 18)
+         and not brain.is_business_pitch(brain.normalise("Scorpio N waterproof cover price?"), 5))
+
     # ---- the rule behind all of it -----------------------------------
     note("M1: a handover sentence counts as saying nothing",
          not brain.reply_says_something(

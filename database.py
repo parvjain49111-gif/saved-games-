@@ -241,11 +241,21 @@ CREATE INDEX IF NOT EXISTS ix_pubrep_time ON public_replies(posted_at);
 """
 
 
+def _ensure_column(conn: sqlite3.Connection, table: str, column: str, decl: str) -> None:
+    cols = [r[1] for r in conn.execute(f"PRAGMA table_info({table})")]
+    if column not in cols:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+        conn.commit()
+
+
 def init_db() -> None:
     """Create the schema if it does not exist, and sync the FAQ table."""
     conn = get_connection()
     with _write_lock:
         conn.executescript(SCHEMA)
+        # Added 4 Nov 2026: what commenters ask under each Reel. CREATE TABLE IF
+        # NOT EXISTS leaves an existing table alone, so add the column by hand.
+        _ensure_column(conn, "media_topics", "asks", "TEXT")
         conn.commit()
     sync_faqs()
 
@@ -339,6 +349,74 @@ def remember_thread(comment_id: str, commenter_id: str, media_id: str) -> None:
             "INSERT OR IGNORE INTO comment_threads (comment_id, commenter_id, media_id, created_at) "
             "VALUES (?, ?, ?, ?)", (comment_id, commenter_id, media_id, now_iso()))
         conn.commit()
+
+
+def latest_thread_for(commenter_id: str) -> Optional[tuple]:
+    """(comment_id, media_id) of the newest comment thread this person opened."""
+    if not commenter_id:
+        return None
+    row = get_connection().execute(
+        "SELECT comment_id, media_id FROM comment_threads WHERE commenter_id = ? "
+        "ORDER BY created_at DESC LIMIT 1", (commenter_id,)).fetchone()
+    return (row["comment_id"], row["media_id"]) if row else None
+
+
+def adopt_state(source_key: str, target_key: str) -> bool:
+    """Give the target conversation the source's memory, if it has none.
+
+    A customer who commented "Hyryder" and then DMs "Mat" is one person; the
+    comment thread and the DM are two conversations only to us.
+    """
+    if not source_key or not target_key or source_key == target_key:
+        return False
+    state = get_state(get_or_create_conversation(source_key))
+    if not state:
+        return False
+    target = get_or_create_conversation(target_key)
+    if get_state(target):
+        return False
+    set_state(target, dict(state))
+    return True
+
+
+def record_media_ask(media_id: str, topic: str) -> None:
+    """Count what commenters ask about under this Reel ("product:gfx_pro")."""
+    if not media_id or not topic:
+        return
+    conn = get_connection()
+    with _write_lock:
+        row = conn.execute("SELECT asks FROM media_topics WHERE media_id = ?",
+                           (media_id,)).fetchone()
+        tally = json.loads(row["asks"]) if row and row["asks"] else {}
+        tally[topic] = int(tally.get(topic, 0)) + 1
+        if row:
+            conn.execute("UPDATE media_topics SET asks = ? WHERE media_id = ?",
+                         (json.dumps(tally), media_id))
+        else:
+            conn.execute(
+                "INSERT INTO media_topics (media_id, caption, service, product, "
+                "fetched_at, asks) VALUES (?,?,?,?,?,?)",
+                (media_id, "", None, None, now_iso(), json.dumps(tally)))
+        conn.commit()
+
+
+def learned_media_topic(media_id: str, min_count: int = 2,
+                        share: float = 0.6) -> Optional[str]:
+    """The topic most commenters ask about under this Reel, when they agree.
+
+    Two asks about the same thing, and at least 60% of all topical asks:
+    then a car-only comment there is a question about that thing.
+    """
+    if not media_id:
+        return None
+    row = get_connection().execute("SELECT asks FROM media_topics WHERE media_id = ?",
+                                   (media_id,)).fetchone()
+    tally = json.loads(row["asks"]) if row and row["asks"] else {}
+    if not tally:
+        return None
+    top, n = max(tally.items(), key=lambda kv: kv[1])
+    total = sum(tally.values())
+    return top if n >= min_count and n / total >= share else None
 
 
 def thread_owner(comment_id: str) -> Optional[str]:

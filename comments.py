@@ -114,6 +114,8 @@ def is_content_free(comment_text: str, seen: "brain.dialogue.Perception") -> boo
     norm = seen.norm.strip()
     if not norm or not re.search("[a-z]", norm):
         return True                                  # emoji / punctuation only
+    if brain.is_business_pitch(norm, len(norm.split())):
+        return True                                  # a seller, not a customer
     if contains_any(norm, _CITY_WORDS) and len(norm.split()) <= 3:
         return False                                 # "Bangalore" - answer it
     has_question = "?" in comment_text or seen.has_followup or bool(seen.asks)
