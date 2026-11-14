@@ -1874,6 +1874,16 @@ def dm_audit_checks():
         note(f"V6: {msg!r} names the car back", car in a.reply.lower(), a.reply)
     note("V7: diacritics are folded before anything else",
          brain.normalise("Škoda Citroën") == "skoda citroen", brain.normalise("Škoda Citroën"))
+    _db2.close_connection(); _cfg2.DB_PATH = _tmp
+    _db2.init_db()
+    try:
+        r = [brain.process("nv_wow", m, use_ai=False) for m in ["Hi", "Wow", "Nice"]]
+        note("V11: a reaction after our menu is not escalated",
+             all("guess" not in x.reply.lower() for x in r[1:]), r[1].reply)
+        note("V12: and it still asks for the car, in new words",
+             "car" in r[1].reply.lower() and r[1].reply != r[0].reply, r[1].reply)
+    finally:
+        _db2.close_connection(); _cfg2.DB_PATH = _old
     note("V8: a bare greeting is recognised, a question is not",
          brain.is_bare_greeting("hello sir") and brain.is_bare_greeting("namaste ji")
          and not brain.is_bare_greeting("hi ppf price"))

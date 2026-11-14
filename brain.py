@@ -2265,6 +2265,27 @@ def _answer_core(message: str, conversation_id: Optional[str] = None,
         # still did not say ("Price?"). Asking the identical question again
         # reads like a broken machine - 15 Sep 2026, live, twice in a row.
         # Hand the customer to the team instead, keeping what we do know.
+        if state.get("last_message_type") == MT.AMBIGUOUS and is_bare_greeting(norm):
+            # A greeting or a reaction after our menu: nothing to escalate.
+            # Say it lightly and ask again, in different words.
+            known_car = _car_phrase(brand, model)
+            if known_car:
+                base.reply = (
+                    f"Ji 😊 aapki {known_car} ke liye kya chahiye - PPF, ceramic, "
+                    f"denting/painting, service ya accessories? Call/WhatsApp: {PHONE}"
+                    if hin else
+                    f"Got it - {known_car} 😊 Just tell me what you need for it: "
+                    f"PPF, ceramic coating, denting/painting, service or accessories?")
+            else:
+                base.reply = (
+                    f"Ji 😊 bas apni car aur kya chahiye bata dijiye - main guide "
+                    f"karta hoon. Call/WhatsApp: {PHONE}" if hin else
+                    f"Happy to help 😊 Just tell me your car and what you need, and "
+                    f"I'll point you the right way. Call/WhatsApp: {PHONE}")
+            base.source, base.intent = "RULE", Intent.OTHER
+            base.confidence, base.covered = 0.7, True
+            base.resolution = Resolution.ANSWERED
+            return base
         if state.get("last_message_type") == MT.AMBIGUOUS \
                 and not is_bare_greeting(norm):
             known = _car_phrase(brand, model)
@@ -3022,7 +3043,12 @@ _ACK_TOKENS = {"ok", "okay", "oky", "okk", "ok ji", "k", "kk", "theek", "thik",
 _GREETING_TOKENS = {"hi", "hii", "hiii", "hello", "hlo", "helo", "hey", "hy", "hyy",
                     "namaste", "namaskar", "sir", "sirji", "ji", "bhai", "bhaiya",
                     "boss", "madam", "mam", "good", "morning", "evening",
-                    "afternoon", "night", "dear", "team", "there", "jai", "jinendra"}
+                    "afternoon", "night", "dear", "team", "there", "jai", "jinendra",
+                    # Reactions, not questions (14 Nov 2026: "Wow" right after "Hi"
+                    # was answered "I don't want to guess - our team will help").
+                    "wow", "nice", "lol", "haha", "hahaha", "hmm", "oh", "ohh", "wah",
+                    "waah", "arre", "oho", "awesome", "great", "cool", "amazing",
+                    "wowww", "omg", "ok", "okay", "okk"}
 
 
 def is_bare_greeting(norm: str) -> bool:
