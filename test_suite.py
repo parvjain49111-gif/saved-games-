@@ -1867,7 +1867,9 @@ def dm_audit_checks():
         _db2.close_connection()
         _cfg2.DB_PATH = _old
     for msg, car in [("Škoda ka hai kaylaq", "kylaq"), ("Nissan micra 2015", "micra"),
-                     ("Gfx pro mats available for kia syros ev?", "syros")]:
+                     ("Gfx pro mats available for kia syros ev?", "syros"),
+                     ("Kigger floor mat", "kiger"), ("Xev9s", "xev 9s"),
+                     ("xev9e gfx pro", "xev 9e")]:
         a = brain.answer(msg, None, use_ai=False)
         note(f"V6: {msg!r} names the car back", car in a.reply.lower(), a.reply)
     note("V7: diacritics are folded before anything else",

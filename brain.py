@@ -164,6 +164,8 @@ PHRASE_SYNONYMS: Dict[str, str] = {
     "belaro": "bolero", "balero": "bolero", "i10 grand": "grand i10",
     "7 xo": "7xo", "3 xo": "3xo", "xuv700 xo": "7xo", "thar rox": "thar roxx",
     "kaylaq": "kylaq", "kylak": "kylaq", "kyalaq": "kylaq", "kaylak": "kylaq",
+    "kigger": "kiger", "kigar": "kiger", "kiger": "kiger", "kaiger": "kiger",
+    "xev9s": "xev 9s", "xev9e": "xev 9e", "xev 9 s": "xev 9s", "xev 9 e": "xev 9e",
 }
 
 # "Mata", "Matte", "matt", "matting" all mean the floor mat - except where
@@ -932,6 +934,8 @@ CAR_MODELS = [
     # 4 Nov 2026 transcripts: a Kylaq comment got no reply at all; a Micra
     # and a Syros were asked "which car?".
     "kylaq", "micra", "syros",
+    # 14 Nov 2026: "Kigger" got the generic menu, "Xev9s" (no space) no reply.
+    "kiger",
 ]
 
 # Make names, so "Skoda octavia" and a bare "Skoda" both register.
@@ -966,7 +970,7 @@ CAR_BRANDS = {
     "xuv 3xo": "Mahindra", "3xo": "Mahindra", "xuv 7xo": "Mahindra",
     "7xo": "Mahindra", "roxx": "Mahindra", "thar roxx": "Mahindra",
     "xev 9s": "Mahindra", "xev 9e": "Mahindra",
-    "kylaq": "Skoda", "micra": "Nissan", "syros": "Kia",
+    "kylaq": "Skoda", "micra": "Nissan", "syros": "Kia", "kiger": "Renault",
 }
 
 _YEAR = re.compile(r"\b(19[89]\d|20[0-4]\d)\b")
@@ -1013,7 +1017,8 @@ _MODEL_DISPLAY = {"i10": "i10", "i20": "i20", "bmw": "BMW", "xuv700": "XUV700",
                   "xuv 3xo": "XUV 3XO", "3xo": "XUV 3XO",
                   "xuv 7xo": "XUV 7XO", "7xo": "XUV 7XO",
                   "roxx": "Thar Roxx", "xev 9s": "XEV 9S", "xev 9e": "XEV 9e",
-                  "kylaq": "Kylaq", "micra": "Micra", "syros": "Syros"}
+                  "kylaq": "Kylaq", "micra": "Micra", "syros": "Syros",
+                  "kiger": "Kiger"}
 
 
 def extract_car(norm: str) -> Tuple[Optional[str], Optional[str], Optional[str]]:
